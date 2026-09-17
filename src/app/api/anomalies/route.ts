@@ -5,6 +5,8 @@ import { successResponse, errorResponse } from "@/lib/api/response";
 import { detectAnomalies, AnomalyDataPoint } from "@/services/anomaly.service";
 import { readStorageFile } from "@/lib/storage/storage";
 import { parseFileBuffer } from "@/services/profiler.service";
+import { eventBus } from "@/lib/events/event-bus";
+import { AlertService } from "@/services/alert.service";
 
 export async function GET(req: NextRequest) {
   const auth = await requirePermission(req, "analytics:read");
@@ -154,6 +156,29 @@ export async function POST(req: NextRequest) {
           },
         });
         createdAnomalies.push(record);
+
+        // Evaluate active alert rules for this metric & anomaly
+        await AlertService.evaluateAlerts({
+          organizationId: orgId,
+          metricCode: metricName,
+          currentValue: anom.deviationPct,
+          details: {
+            anomalyId: record.id,
+            timestamp: anom.timestamp,
+            severity: anom.severity,
+            factor: anom.rootCause?.factor,
+          },
+        }).catch(() => {});
+
+        // Publish live anomaly event to Event Bus for SSE streams
+        eventBus.publishToTenant(orgId, "ANOMALY_ALERT", {
+          id: record.id,
+          metricName,
+          timestamp: anom.timestamp,
+          severity: anom.severity,
+          deviationPct: anom.deviationPct,
+          factor: anom.rootCause?.factor,
+        });
 
         if (anom.severity === "CRITICAL") {
           await prisma.notification.create({

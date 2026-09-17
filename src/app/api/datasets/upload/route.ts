@@ -6,6 +6,7 @@ import { validateFileBuffer } from "@/lib/security/file-validator";
 import { profileFileChunked } from "@/services/profiler.service";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { AppConfig } from "@/config/app.config";
+import { eventBus } from "@/lib/events/event-bus";
 
 export async function POST(req: NextRequest) {
   const auth = await requirePermission(req, "datasets:write");
@@ -161,6 +162,13 @@ export async function POST(req: NextRequest) {
         type: "DATASET_READY",
         linkUrl: "/data-hub",
       },
+    });
+
+    eventBus.publishToTenant(orgId, "DATASET_READY", {
+      datasetId: createdDataset.dataset.id,
+      name: createdDataset.dataset.name,
+      rowCount: profile.rowCount,
+      qualityScore: profile.qualityScore,
     });
 
     const response = successResponse({

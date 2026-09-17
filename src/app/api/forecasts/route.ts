@@ -6,6 +6,7 @@ import { readStorageFile } from "@/lib/storage/storage";
 import { parseFileBuffer } from "@/services/profiler.service";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { AppConfig } from "@/config/app.config";
+import { eventBus } from "@/lib/events/event-bus";
 
 export async function POST(req: NextRequest) {
   const auth = await requirePermission(req, "forecasts:write");
@@ -159,6 +160,14 @@ export async function POST(req: NextRequest) {
         type: "FORECAST_COMPLETED",
         linkUrl: "/forecasting",
       },
+    });
+
+    eventBus.publishToTenant(orgId, "FORECAST_COMPLETED", {
+      forecastId: forecastRecord.forecast.id,
+      runId: forecastRecord.run.id,
+      championModel: forecastResult.championModel,
+      evaluationMetrics: forecastResult.evaluationMetrics,
+      horizonPeriods: Number(horizonPeriods) || 6,
     });
 
     return successResponse({
