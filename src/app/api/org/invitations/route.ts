@@ -80,3 +80,4 @@ export async function DELETE(req: NextRequest) {
     return errorResponse(err.message || "Failed to revoke invitation.", 400);
   }
 }
+

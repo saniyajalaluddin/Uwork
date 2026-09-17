@@ -21,3 +21,4 @@ export async function GET(req: NextRequest) {
     return errorResponse(err.message || "Failed to verify invitation.", 500);
   }
 }
+

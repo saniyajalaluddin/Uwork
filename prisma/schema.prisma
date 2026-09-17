@@ -63,6 +63,8 @@ model Organization {
   apiKeys        APIKey[]
   auditLogs      AuditLog[]
   jobs           Job[]
+  webhooks       WebhookSubscription[]
+  webhookDeliveries WebhookDelivery[]
 }
 
 model OrganizationMember {
@@ -619,4 +621,54 @@ model Job {
   @@index([organizationId, status])
   @@index([organizationId, jobType])
 }
+
+// --------------------------------------------------------
+// Webhooks & Integrations
+// --------------------------------------------------------
+
+model WebhookSubscription {
+  id             String            @id @default(uuid())
+  organizationId String
+  name           String
+  url            String
+  secret         String            // HMAC-SHA256 signing secret: whsec_...
+  eventsJson     String            @default("[\"*\"]") // Array of event names, e.g. ["anomaly.detected"]
+  isActive       Boolean           @default(true)
+  failureCount   Int               @default(0)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries     WebhookDelivery[]
+
+  @@index([organizationId])
+  @@index([organizationId, isActive])
+}
+
+model WebhookDelivery {
+  id             String              @id @default(uuid())
+  webhookId      String
+  organizationId String
+  event          String              // e.g. anomaly.detected, ping
+  payloadJson    String
+  statusCode     Int?
+  status         String              @default("PENDING") // PENDING, SUCCESS, FAILED, RETRYING, DEAD_LETTER
+  attempt        Int                 @default(1)
+  maxAttempts    Int                 @default(3)
+  error          String?
+  durationMs     Int?
+  deliveredAt    DateTime?
+  nextRetryAt    DateTime?
+  createdAt      DateTime            @default(now())
+
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  webhook        WebhookSubscription @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([webhookId])
+  @@index([status])
+  @@index([status, nextRetryAt])
+  @@index([organizationId, createdAt])
+}
+
 

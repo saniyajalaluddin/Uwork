@@ -25,10 +25,16 @@ import {
   Clock,
   ExternalLink,
   ShieldAlert,
+  Webhook,
+  Bell,
+  Send,
+  RefreshCw,
+  Activity,
+  Radio,
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "audit">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "webhooks" | "audit">("profile");
 
   // Profile State
   const [profile, setProfile] = useState<any>(null);
@@ -57,6 +63,20 @@ export default function SettingsPage() {
   const [invitations, setInvitations] = useState<any[]>([]);
   const [createdInviteLink, setCreatedInviteLink] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Webhooks & Integrations State
+  const [webhooks, setWebhooks] = useState<any[]>([]);
+  const [webhookName, setWebhookName] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookEvents, setWebhookEvents] = useState<string[]>(["*"]);
+  const [createdWebhook, setCreatedWebhook] = useState<any | null>(null);
+  const [testingWebhookId, setTestingWebhookId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ [id: string]: any }>({});
+  const [selectedWebhookHistory, setSelectedWebhookHistory] = useState<{ webhook: any; deliveries: any[] } | null>(null);
+
+  // In-app Notifications State
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
 
   // Benefits State
   const [benefits, setBenefits] = useState<any>(null);
@@ -111,6 +131,12 @@ export default function SettingsPage() {
     // Load Invitations
     loadInvitations();
 
+    // Load Webhooks
+    loadWebhooks();
+
+    // Load In-App Notifications
+    loadNotifications();
+
     // Load Benefits
     fetch("/api/org/benefits")
       .then((res) => res.json())
@@ -144,6 +170,8 @@ export default function SettingsPage() {
           loadInvitations();
         } else if (payload.type === "ORGANIZATION_UPDATED") {
           loadOrg();
+        } else if (payload.type === "NOTIFICATION") {
+          loadNotifications();
         }
       } catch {}
     };
@@ -183,6 +211,27 @@ export default function SettingsPage() {
       .catch(() => {});
   };
 
+  const loadWebhooks = () => {
+    fetch("/api/webhooks")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) setWebhooks(data.data.webhooks || []);
+      })
+      .catch(() => {});
+  };
+
+  const loadNotifications = () => {
+    fetch("/api/notifications")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) {
+          setNotifications(data.data.notifications || []);
+          setUnreadNotificationCount(data.data.unreadCount || 0);
+        }
+      })
+      .catch(() => {});
+  };
+
   const loadApiKeys = () => {
     fetch("/api/org/api-keys")
       .then((res) => {
@@ -193,6 +242,127 @@ export default function SettingsPage() {
         if (data?.success) setApiKeys(data.data.apiKeys || []);
       })
       .catch(() => {});
+  };
+
+  const handleCreateWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: webhookName,
+          url: webhookUrl,
+          events: webhookEvents,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWebhookName("");
+        setWebhookUrl("");
+        setWebhookEvents(["*"]);
+        setCreatedWebhook(data.data.webhook);
+        loadWebhooks();
+      } else {
+        alert(data.error?.message || "Failed to create webhook.");
+      }
+    } catch {
+      alert("Error creating webhook.");
+    }
+  };
+
+  const handleDeleteWebhook = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this webhook endpoint?")) return;
+    try {
+      const res = await fetch(`/api/webhooks?id=${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        loadWebhooks();
+      } else {
+        alert(data.error?.message || "Failed to delete webhook.");
+      }
+    } catch {
+      alert("Error deleting webhook.");
+    }
+  };
+
+  const handleTestWebhook = async (id: string) => {
+    setTestingWebhookId(id);
+    try {
+      const res = await fetch(`/api/webhooks/${id}/test`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        setTestResult((prev) => ({ ...prev, [id]: data.data.delivery }));
+      } else {
+        alert(data.error?.message || "Test webhook delivery failed.");
+      }
+    } catch {
+      alert("Error testing webhook.");
+    } finally {
+      setTestingWebhookId(null);
+    }
+  };
+
+  const handleRotateWebhookSecret = async (id: string) => {
+    if (!confirm("Rotate this webhook secret? Existing signature verifications will immediately require the new secret.")) return;
+    try {
+      const res = await fetch(`/api/webhooks/${id}/rotate-secret`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        alert(`New Secret generated: ${data.data.newSecret}`);
+        loadWebhooks();
+      } else {
+        alert(data.error?.message || "Failed to rotate secret.");
+      }
+    } catch {
+      alert("Error rotating secret.");
+    }
+  };
+
+  const handleViewDeliveries = async (webhook: any) => {
+    try {
+      const res = await fetch(`/api/webhooks/${webhook.id}/deliveries`);
+      const data = await res.json();
+      if (data.success) {
+        setSelectedWebhookHistory({ webhook, deliveries: data.data.deliveries || [] });
+      }
+    } catch {
+      alert("Error fetching delivery history.");
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const res = await fetch("/api/notifications", { method: "PATCH" });
+      const data = await res.json();
+      if (data.success) {
+        loadNotifications();
+      }
+    } catch {}
+  };
+
+  const handleMarkSingleNotificationRead = async (id: string) => {
+    try {
+      const res = await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationId: id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadNotifications();
+      }
+    } catch {}
+  };
+
+  const handleDeleteNotification = async (id: string) => {
+    try {
+      const res = await fetch(`/api/notifications?id=${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        loadNotifications();
+      }
+    } catch {}
   };
 
   // Handlers
@@ -429,6 +599,7 @@ export default function SettingsPage() {
           { id: "members", label: "Team & Member Access", icon: Users },
           { id: "benefits", label: "Admin Benefits & Quotas", icon: Shield },
           { id: "apikeys", label: "API Keys & Developers", icon: Key },
+          { id: "webhooks", label: "Webhooks & Alerts", icon: Webhook, badge: unreadNotificationCount > 0 ? unreadNotificationCount : null },
           { id: "audit", label: "Compliance Audit Trail", icon: History },
         ].map((t) => {
           const Icon = t.icon;
@@ -445,6 +616,11 @@ export default function SettingsPage() {
             >
               <Icon className="h-4 w-4" />
               <span>{t.label}</span>
+              {t.badge && (
+                <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                  {t.badge}
+                </span>
+              )}
             </button>
           );
         })}
@@ -1188,6 +1364,417 @@ export default function SettingsPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* TAB: WEBHOOKS & NOTIFICATIONS */}
+      {activeTab === "webhooks" && (
+        <div className="space-y-6">
+          {/* Section 1: In-App Notifications Center */}
+          <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Bell className="h-5 w-5 text-blue-400" />
+                <h2 className="text-sm font-bold text-white">In-App Notification Center</h2>
+                {unreadNotificationCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs font-semibold">
+                    {unreadNotificationCount} unread
+                  </span>
+                )}
+              </div>
+              {notifications.length > 0 && (
+                <button
+                  onClick={handleMarkAllNotificationsRead}
+                  className="text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 transition"
+                >
+                  Mark all as read
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              {notifications.map((n) => (
+                <div
+                  key={n.id}
+                  className={`p-3 rounded-lg border text-xs flex items-start justify-between gap-3 transition ${
+                    n.isRead
+                      ? "bg-slate-900/40 border-slate-800/60 text-slate-400"
+                      : "bg-blue-950/20 border-blue-800/40 text-slate-200 shadow-sm"
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5">
+                      {n.type === "CRITICAL" ? (
+                        <AlertCircle className="h-4 w-4 text-red-400" />
+                      ) : n.type === "WARNING" ? (
+                        <AlertCircle className="h-4 w-4 text-amber-400" />
+                      ) : n.type === "SUCCESS" ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      ) : (
+                        <Radio className="h-4 w-4 text-blue-400" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white">{n.title}</span>
+                        {!n.isRead && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{n.message}</p>
+                      <span className="text-[10px] text-slate-500 mt-1 inline-block">
+                        {new Date(n.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {!n.isRead && (
+                      <button
+                        onClick={() => handleMarkSingleNotificationRead(n.id)}
+                        className="text-[11px] text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded hover:bg-blue-500/10"
+                      >
+                        Mark read
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteNotification(n.id)}
+                      className="text-slate-500 hover:text-red-400 p-1 rounded transition"
+                      title="Delete notification"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {notifications.length === 0 && (
+                <div className="py-8 text-center text-slate-500 text-xs">
+                  No notifications found. Real-time platform alerts and system events will appear here.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 2: Outbound Webhook Integration Hub */}
+          <div className="space-y-5">
+            {!canManage ? (
+              <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 text-center space-y-3">
+                <Webhook className="h-8 w-8 text-blue-400 mx-auto" />
+                <h3 className="text-sm font-bold text-white">Webhook Management Restricted</h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Configuring enterprise outbound webhooks and cryptographic HMAC signing keys is restricted to Organization Administrators and Owners.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Secret Alert Banner if newly created */}
+                {createdWebhook && (
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-amber-400" />
+                        <h4 className="text-xs font-bold text-amber-400">Webhook Created Successfully</h4>
+                      </div>
+                      <button
+                        onClick={() => setCreatedWebhook(null)}
+                        className="text-xs text-slate-400 hover:text-white"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-300">
+                      Copy your signing secret now. For security reasons, it will <strong>never be shown again</strong>.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="px-3 py-1.5 rounded bg-slate-950 border border-slate-800 text-amber-300 font-mono text-xs flex-1 select-all break-all">
+                        {createdWebhook.rawSecret}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(createdWebhook.rawSecret);
+                          alert("Secret copied to clipboard!");
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold transition"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Create Webhook Form */}
+                <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+                    <Webhook className="h-5 w-5 text-blue-400" />
+                    <h3 className="text-sm font-bold text-white">Register Outbound Webhook Endpoint</h3>
+                  </div>
+                  <form onSubmit={handleCreateWebhook} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-slate-300">Endpoint Name</label>
+                        <input
+                          type="text"
+                          required
+                          value={webhookName}
+                          onChange={(e) => setWebhookName(e.target.value)}
+                          placeholder="e.g. Slack Enterprise Alerts"
+                          className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-slate-300">Target HTTPS Endpoint URL</label>
+                        <input
+                          type="url"
+                          required
+                          value={webhookUrl}
+                          onChange={(e) => setWebhookUrl(e.target.value)}
+                          placeholder="https://api.yourdomain.com/webhooks/uwork"
+                          className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-slate-300">Subscribed Events</label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { id: "*", label: "All Events (*)" },
+                          { id: "FORECAST_GENERATED", label: "Forecast Generated" },
+                          { id: "ANOMALY_DETECTED", label: "Anomaly Detected" },
+                          { id: "DATASET_INGESTED", label: "Dataset Ingested" },
+                          { id: "DECISION_CREATED", label: "Decision Created" },
+                          { id: "SYSTEM_ALERT", label: "System Alert" },
+                          { id: "NOTIFICATION", label: "In-App Notification" },
+                        ].map((ev) => {
+                          const isSelected = webhookEvents.includes(ev.id);
+                          return (
+                            <button
+                              type="button"
+                              key={ev.id}
+                              onClick={() => {
+                                if (ev.id === "*") {
+                                  setWebhookEvents(["*"]);
+                                } else {
+                                  const filtered = webhookEvents.filter((e) => e !== "*");
+                                  if (filtered.includes(ev.id)) {
+                                    const next = filtered.filter((e) => e !== ev.id);
+                                    setWebhookEvents(next.length === 0 ? ["*"] : next);
+                                  } else {
+                                    setWebhookEvents([...filtered, ev.id]);
+                                  }
+                                }
+                              }}
+                              className={`px-2.5 py-1 rounded text-[11px] font-medium transition border ${
+                                isSelected
+                                  ? "bg-blue-600/30 border-blue-500 text-blue-300"
+                                  : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white"
+                              }`}
+                            >
+                              {ev.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-md shadow-blue-600/20"
+                    >
+                      Register Webhook Endpoint
+                    </button>
+                  </form>
+                </div>
+
+                {/* Configured Webhooks List */}
+                <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 className="text-sm font-bold text-white">Active Webhook Endpoints ({webhooks.length})</h3>
+                    <span className="text-[11px] text-slate-500 font-mono">HMAC-SHA256 Signed</span>
+                  </div>
+
+                  <div className="divide-y divide-slate-800/60 text-xs">
+                    {webhooks.map((w) => (
+                      <div key={w.id} className="py-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-white">{w.name}</span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                  w.isActive
+                                    ? "bg-emerald-500/20 text-emerald-400"
+                                    : "bg-slate-800 text-slate-400"
+                                }`}
+                              >
+                                {w.isActive ? "Active" : "Disabled"}
+                              </span>
+                              {w.failureCount > 0 && (
+                                <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 text-[10px] font-semibold">
+                                  {w.failureCount} fails
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-400 mt-1 break-all">
+                              {w.url}
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {w.events.map((ev: string) => (
+                                <span
+                                  key={ev}
+                                  className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px] text-slate-400 font-mono"
+                                >
+                                  {ev}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              onClick={() => handleTestWebhook(w.id)}
+                              disabled={testingWebhookId === w.id}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 font-medium text-xs transition disabled:opacity-50"
+                            >
+                              <Send className="h-3 w-3" />
+                              <span>{testingWebhookId === w.id ? "Sending..." : "Test Ping"}</span>
+                            </button>
+                            <button
+                              onClick={() => handleViewDeliveries(w)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition"
+                            >
+                              <Activity className="h-3 w-3" />
+                              <span>Logs</span>
+                            </button>
+                            <button
+                              onClick={() => handleRotateWebhookSecret(w.id)}
+                              className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-medium text-xs transition"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                              <span>Rotate Secret</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteWebhook(w.id)}
+                              className="p-1.5 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition"
+                              title="Delete Webhook"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Recent Test Result Preview */}
+                        {testResult[w.id] && (
+                          <div
+                            className={`p-2.5 rounded-lg border text-[11px] font-mono flex items-center justify-between ${
+                              testResult[w.id].status === "SUCCESS"
+                                ? "bg-emerald-950/20 border-emerald-800/40 text-emerald-300"
+                                : "bg-red-950/20 border-red-800/40 text-red-300"
+                            }`}
+                          >
+                            <span>
+                              Result: {testResult[w.id].status} • HTTP {testResult[w.id].statusCode || "ERR"} • Latency: {testResult[w.id].durationMs}ms
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-sans">
+                              {new Date(testResult[w.id].deliveredAt || Date.now()).toLocaleTimeString()}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {webhooks.length === 0 && (
+                      <div className="py-6 text-center text-slate-500 text-xs">
+                        No active webhooks configured. Register an endpoint above for real-time outbound automation.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Delivery Logs Modal / History Panel */}
+                {selectedWebhookHistory && (
+                  <div className="p-6 rounded-xl bg-slate-900 border border-blue-500/30 space-y-4 shadow-xl">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                      <div>
+                        <h4 className="text-sm font-bold text-white">
+                          Delivery Log: {selectedWebhookHistory.webhook.name}
+                        </h4>
+                        <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                          {selectedWebhookHistory.webhook.url}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setSelectedWebhookHistory(null)}
+                        className="text-xs text-slate-400 hover:text-white px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700"
+                      >
+                        Close Logs
+                      </button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                            <th className="py-2 px-3">Time</th>
+                            <th className="py-2 px-3">Event</th>
+                            <th className="py-2 px-3">Status</th>
+                            <th className="py-2 px-3">HTTP Code</th>
+                            <th className="py-2 px-3">Duration</th>
+                            <th className="py-2 px-3">Attempts</th>
+                            <th className="py-2 px-3">Details</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {selectedWebhookHistory.deliveries.map((del: any) => (
+                            <tr key={del.id} className="hover:bg-slate-800/30">
+                              <td className="py-2 px-3 font-mono text-[11px] text-slate-400">
+                                {new Date(del.deliveredAt).toLocaleTimeString()}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-[11px] text-blue-400">
+                                {del.event}
+                              </td>
+                              <td className="py-2 px-3">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                    del.status === "SUCCESS"
+                                      ? "bg-emerald-500/20 text-emerald-400"
+                                      : del.status === "DEAD_LETTER"
+                                      ? "bg-purple-500/20 text-purple-400"
+                                      : "bg-red-500/20 text-red-400"
+                                  }`}
+                                >
+                                  {del.status}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 font-mono text-[11px]">
+                                {del.statusCode || "—"}
+                              </td>
+                              <td className="py-2 px-3 text-slate-400">
+                                {del.durationMs}ms
+                              </td>
+                              <td className="py-2 px-3 text-slate-400">
+                                {del.attemptCount}
+                              </td>
+                              <td className="py-2 px-3 text-[11px] text-slate-400 max-w-xs truncate">
+                                {del.error || "Delivered successfully"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {selectedWebhookHistory.deliveries.length === 0 && (
+                        <div className="py-6 text-center text-slate-500 text-xs">
+                          No delivery records found for this webhook endpoint.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
 

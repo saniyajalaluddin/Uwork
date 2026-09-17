@@ -114,3 +114,4 @@ export async function DELETE(req: NextRequest) {
     return errorResponse(err.message || "Failed to delete organization.", 400);
   }
 }
+

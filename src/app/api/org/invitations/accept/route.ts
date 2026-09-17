@@ -30,3 +30,4 @@ export async function POST(req: NextRequest) {
     return errorResponse(err.message || "Failed to accept invitation.", 400);
   }
 }
+

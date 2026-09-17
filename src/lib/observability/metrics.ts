@@ -75,6 +75,8 @@ export function recordDuration(
   }
 }
 
+export const recordHistogram = recordDuration;
+
 export interface MetricHistogramStats {
   count: number;
   sum: number;

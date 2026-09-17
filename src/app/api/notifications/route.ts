@@ -1,43 +1,88 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db/prisma";
 import { requireAuth } from "@/lib/api/middleware";
-import { successResponse } from "@/lib/api/response";
+import { successResponse, errorResponse } from "@/lib/api/response";
+import {
+  listNotifications,
+  markNotificationsAsRead,
+  deleteNotification,
+} from "@/services/notification.service";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
 
-  const notifications = await prisma.notification.findMany({
-    where: {
-      organizationId: auth.context.organization.id,
-      OR: [
-        { userId: auth.context.user.id },
-        { userId: null },
-      ],
-    },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  });
+  const orgId = auth.context.organization.id;
+  const userId = auth.context.user.id;
 
-  return successResponse({ notifications });
+  const { searchParams } = new URL(req.url);
+  const isReadParam = searchParams.get("isRead");
+  const isRead = isReadParam !== null ? isReadParam === "true" : undefined;
+  const limitParam = searchParams.get("limit");
+  const limit = limitParam ? parseInt(limitParam, 10) : 50;
+
+  try {
+    const data = await listNotifications({
+      organizationId: orgId,
+      userId,
+      isRead,
+      limit,
+    });
+
+    return successResponse(data);
+  } catch (err: any) {
+    return errorResponse(err.message || "Failed to fetch notifications.", 500);
+  }
 }
 
 export async function PATCH(req: NextRequest) {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
 
-  await prisma.notification.updateMany({
-    where: {
-      organizationId: auth.context.organization.id,
-      isRead: false,
-      OR: [
-        { userId: auth.context.user.id },
-        { userId: null },
-      ],
-    },
-    data: { isRead: true },
-  });
+  const orgId = auth.context.organization.id;
+  const userId = auth.context.user.id;
 
-  return successResponse({ message: "All notifications marked as read." });
+  try {
+    const body = await req.json().catch(() => ({}));
+    const { notificationId } = body;
+
+    const result = await markNotificationsAsRead({
+      organizationId: orgId,
+      userId,
+      notificationId,
+    });
+
+    return successResponse({
+      message: notificationId ? "Notification marked as read." : "All notifications marked as read.",
+      ...result,
+    });
+  } catch (err: any) {
+    return errorResponse(err.message || "Failed to mark notifications as read.", 400);
+  }
 }
 
+export async function DELETE(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if ("error" in auth) return auth.error;
+
+  const orgId = auth.context.organization.id;
+  const userId = auth.context.user.id;
+
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return errorResponse("Notification ID is required as query parameter '?id='.", 400);
+  }
+
+  try {
+    const result = await deleteNotification({
+      organizationId: orgId,
+      userId,
+      notificationId: id,
+    });
+
+    return successResponse({ message: "Notification deleted.", ...result });
+  } catch (err: any) {
+    return errorResponse(err.message || "Failed to delete notification.", 400);
+  }
+}
