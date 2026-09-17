@@ -1,0 +1,600 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------
+// Identity & Multi-Tenancy
+// --------------------------------------------------------
+
+model User {
+  id                String               @id @default(uuid())
+  email             String               @unique
+  passwordHash      String
+  firstName         String
+  lastName          String
+  avatarUrl         String?
+  isActive          Boolean              @default(true)
+  emailVerifiedAt   DateTime?
+  failedLoginAttempts Int                @default(0)
+  lockedUntil       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  memberships       OrganizationMember[]
+  sessions          Session[]
+  passwordResets    PasswordResetToken[]
+  emailTokens       EmailVerificationToken[]
+  createdDatasets   Dataset[]
+  generatedReports  Report[]
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+}
+
+model Organization {
+  id             String               @id @default(uuid())
+  name           String
+  slug           String               @unique
+  planTier       String               @default("ENTERPRISE")
+  logoUrl        String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  members        OrganizationMember[]
+  sessions       Session[]
+  datasets       Dataset[]
+  metrics        Metric[]
+  dashboards     Dashboard[]
+  forecasts      Forecast[]
+  anomalies      Anomaly[]
+  insights       Insight[]
+  healthScores   BusinessHealthScore[]
+  decisionItems  DecisionItem[]
+  reports        Report[]
+  reportSchedules ReportSchedule[]
+  alerts         Alert[]
+  notifications  Notification[]
+  apiKeys        APIKey[]
+  auditLogs      AuditLog[]
+  jobs           Job[]
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  role           String       @default("ANALYST") // OWNER, ADMIN, ANALYST, VIEWER
+  joinedAt       DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model Session {
+  id                   String       @id @default(uuid())
+  userId               String
+  activeOrganizationId String
+  tokenHash            String       @unique
+  ipAddress            String?
+  userAgent            String?
+  expiresAt            DateTime
+  createdAt            DateTime     @default(now())
+
+  user                 User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeOrganization   Organization @relation(fields: [activeOrganizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([activeOrganizationId])
+  @@index([userId, activeOrganizationId])
+}
+
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model EmailVerificationToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model APIKey {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  keyPrefix      String
+  keyHash        String       @unique
+  scopes         String       @default("read,write")
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// --------------------------------------------------------
+// Data Hub, Profiling & Ingestion
+// --------------------------------------------------------
+
+model Dataset {
+  id                String           @id @default(uuid())
+  organizationId    String
+  name              String
+  description       String?
+  sourceType        String           @default("CSV") // CSV, XLSX, POSTGRES, API
+  currentVersionId  String?
+  isArchived        Boolean          @default(false)
+  createdById       String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy         User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  versions          DatasetVersion[]
+
+  @@index([organizationId])
+  @@index([createdById])
+  @@index([organizationId, isArchived])
+  @@index([organizationId, createdAt])
+}
+
+model DatasetVersion {
+  id                String                 @id @default(uuid())
+  datasetId         String
+  versionNumber     Int                    @default(1)
+  storagePath       String
+  fileName          String
+  fileSizeBytes     Int
+  mimeType          String
+  rowCount          Int                    @default(0)
+  columnCount       Int                    @default(0)
+  checksumSha256    String
+  status            String                 @default("READY") // UPLOADED, PROFILING, PROFILED, READY, FAILED
+  cleanedFromVersionId String?
+  createdAt         DateTime               @default(now())
+
+  dataset           Dataset                @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  columns           DatasetColumn[]
+  validationResult  DataValidationResult?
+  cleaningJobs      DataCleaningJob[]      @relation("InputVersion")
+  metrics           Metric[]
+  forecasts         Forecast[]
+  anomalies         Anomaly[]
+  insights          Insight[]
+  healthScores      BusinessHealthScore[]
+  reports           Report[]
+
+  @@index([datasetId])
+  @@index([datasetId, versionNumber])
+}
+
+model DatasetColumn {
+  id                   String         @id @default(uuid())
+  datasetVersionId     String
+  columnIndex          Int
+  name                 String
+  originalName         String
+  dataType             String         // NUMERIC, TEXT, DATE, BOOLEAN, CATEGORICAL
+  inferredBusinessRole String         @default("GENERIC_DIMENSION") // REVENUE, SALES_VOLUME, PROFIT, COST, DISCOUNT, CUSTOMER_ID, PRODUCT_ID, DATE_TIME, REGION, GENERIC_DIMENSION, GENERIC_METRIC
+  nullCount            Int            @default(0)
+  uniqueCount          Int            @default(0)
+  sampleValuesJson     String         @default("[]")
+  summaryStatsJson     String         @default("{}")
+
+  datasetVersion       DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([datasetVersionId])
+  @@index([datasetVersionId, columnIndex])
+}
+
+model DataValidationResult {
+  id                    String         @id @default(uuid())
+  datasetVersionId      String         @unique
+  qualityScore          Float          // 0 - 100
+  passed                Boolean        @default(true)
+  totalRulesEvaluated   Int            @default(0)
+  summaryJson           String         @default("{}")
+  issuesJson            String         @default("[]")
+  createdAt             DateTime       @default(now())
+
+  datasetVersion        DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+}
+
+model DataCleaningJob {
+  id                String         @id @default(uuid())
+  inputVersionId    String
+  operationsJson    String         @default("[]")
+  status            String         @default("QUEUED") // QUEUED, RUNNING, COMPLETED, FAILED
+  outputVersionId   String?
+  logs              String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+
+  inputVersion      DatasetVersion @relation("InputVersion", fields: [inputVersionId], references: [id], onDelete: Cascade)
+
+  @@index([inputVersionId])
+}
+
+// --------------------------------------------------------
+// Metrics, Dashboards & Analytics
+// --------------------------------------------------------
+
+model Metric {
+  id                String           @id @default(uuid())
+  organizationId    String
+  datasetVersionId  String?
+  name              String
+  code              String           // TOTAL_REVENUE, NET_PROFIT, AOV, REVENUE_GROWTH, etc.
+  columnMappingJson String           @default("{}")
+  aggregationType   String           @default("SUM") // SUM, AVG, COUNT, COUNT_DISTINCT
+  timeGranularity   String           @default("MONTHLY")
+  targetValue       Float?
+  createdAt         DateTime         @default(now())
+
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  datasetVersion    DatasetVersion?  @relation(fields: [datasetVersionId], references: [id], onDelete: SetNull)
+  widgets           DashboardWidget[]
+
+  @@index([organizationId])
+  @@index([code])
+  @@index([organizationId, code])
+}
+
+model Dashboard {
+  id                String            @id @default(uuid())
+  organizationId    String
+  title             String
+  slug              String
+  type              String            @default("OVERVIEW") // OVERVIEW, SALES, REVENUE, CUSTOMERS, PRODUCTS, CUSTOM
+  layoutJson        String            @default("{}")
+  isDefault         Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  widgets           DashboardWidget[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+}
+
+model DashboardWidget {
+  id                String       @id @default(uuid())
+  dashboardId       String
+  metricId          String?
+  title             String
+  type              String       // KPI_CARD, LINE_CHART, BAR_CHART, DONUT_CHART, HEATMAP, INTELLIGENCE_CARD, DATA_TABLE
+  configJson        String       @default("{}")
+  orderIndex        Int          @default(0)
+
+  dashboard         Dashboard    @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  metric            Metric?      @relation(fields: [metricId], references: [id], onDelete: SetNull)
+
+  @@index([dashboardId])
+}
+
+// --------------------------------------------------------
+// Forecasting & ML Engine
+// --------------------------------------------------------
+
+model Forecast {
+  id                String          @id @default(uuid())
+  organizationId    String
+  datasetVersionId  String
+  name              String
+  targetColumnName  String
+  dateColumnName    String
+  frequency         String          @default("MONTHLY") // DAILY, WEEKLY, MONTHLY
+  horizonPeriods    Int             @default(6)
+  confidenceLevel   Float           @default(0.95)
+  status            String          @default("READY")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  datasetVersion    DatasetVersion  @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+  runs              ForecastRun[]
+
+  @@index([organizationId])
+  @@index([datasetVersionId])
+  @@index([organizationId, createdAt])
+}
+
+model ForecastRun {
+  id                String          @id @default(uuid())
+  forecastId        String
+  runNumber         Int             @default(1)
+  status            String          @default("COMPLETED") // QUEUED, TRAINING, COMPLETED, FAILED
+  selectedModelName String
+  metricsJson       String          // MAE, RMSE, MAPE, sMAPE, R2
+  candidateScoresJson String        // Comparison across Holt-Winters, ARIMA, Linear, Random Forest
+  driversJson       String          // Trend, seasonality, feature importance
+  errorMessage      String?
+  startedAt         DateTime        @default(now())
+  completedAt       DateTime?
+
+  forecast          Forecast        @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  predictions       Prediction[]
+  models            ForecastModel[]
+
+  @@index([forecastId])
+  @@index([forecastId, status])
+}
+
+model Prediction {
+  id                String       @id @default(uuid())
+  forecastRunId     String
+  timestamp         String       // ISO Date String YYYY-MM-DD
+  actualValue       Float?
+  predictedValue    Float
+  confidenceLower   Float
+  confidenceUpper   Float
+  isForecast        Boolean      @default(true)
+
+  forecastRun       ForecastRun  @relation(fields: [forecastRunId], references: [id], onDelete: Cascade)
+
+  @@index([forecastRunId])
+  @@index([timestamp])
+  @@index([forecastRunId, isForecast])
+}
+
+model ForecastModel {
+  id                String       @id @default(uuid())
+  forecastRunId     String
+  modelType         String       // HOLT_WINTERS, AUTO_ARIMA, LINEAR_TREND, RANDOM_FOREST
+  hyperparamsJson   String       @default("{}")
+  trainingTimeMs    Int          @default(0)
+  validationSplitDate String?
+  isChampion        Boolean      @default(false)
+  scoresJson        String       @default("{}")
+
+  forecastRun       ForecastRun  @relation(fields: [forecastRunId], references: [id], onDelete: Cascade)
+
+  @@index([forecastRunId])
+}
+
+// --------------------------------------------------------
+// Anomalies, Intelligence & Decision Center
+// --------------------------------------------------------
+
+model Anomaly {
+  id                String         @id @default(uuid())
+  organizationId    String
+  datasetVersionId  String
+  metricName        String
+  timestamp         String
+  observedValue     Float
+  expectedValue     Float
+  deviationPct      Float
+  severity          String         // CRITICAL, HIGH, MEDIUM, LOW
+  detectionMethod   String         // IQR_OUTLIER, ROLLING_ZSCORE, SEASONAL_RESIDUAL
+  rootCauseJson     String         @default("{}")
+  isAcknowledged    Boolean        @default(false)
+  detectedAt        DateTime       @default(now())
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  datasetVersion    DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([datasetVersionId])
+  @@index([organizationId, detectedAt])
+  @@index([organizationId, severity])
+  @@index([organizationId, isAcknowledged])
+}
+
+model Insight {
+  id                String         @id @default(uuid())
+  organizationId    String
+  datasetVersionId  String
+  category          String         // GROWTH, CHURN, CONCENTRATION, SEASONALITY, EFFICIENCY
+  title             String
+  observation       String
+  evidenceJson      String         @default("{}")
+  impactMagnitude   Float          @default(0)
+  recommendedAction String
+  generatedAt       DateTime       @default(now())
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  datasetVersion    DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([datasetVersionId])
+}
+
+model BusinessHealthScore {
+  id                String         @id @default(uuid())
+  organizationId    String
+  datasetVersionId  String
+  calculatedAt      DateTime       @default(now())
+  overallScore      Float          // 0 - 100
+  revenueScore      Float
+  profitScore       Float
+  retentionScore    Float
+  growthScore       Float
+  stabilityScore    Float
+  weightsJson       String         @default("{}")
+  rationaleJson     String         @default("[]")
+
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  datasetVersion    DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([datasetVersionId])
+  @@index([organizationId, calculatedAt])
+}
+
+model DecisionItem {
+  id                String       @id @default(uuid())
+  organizationId    String
+  title             String
+  priority          String       // CRITICAL, HIGH, MEDIUM, LOW
+  category          String       // REVENUE, INVENTORY, CUSTOMER, PRICING, REGIONAL
+  impactSummary     String
+  evidenceJson      String       @default("{}")
+  recommendedAction String
+  status            String       @default("OPEN") // OPEN, ACKNOWLEDGED, RESOLVED, DISMISSED
+  createdAt         DateTime     @default(now())
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+}
+
+// --------------------------------------------------------
+// Reports, Alerts & Operations
+// --------------------------------------------------------
+
+model Report {
+  id                String          @id @default(uuid())
+  organizationId    String
+  datasetVersionId  String?
+  generatedById     String
+  title             String
+  type              String          // EXECUTIVE_SUMMARY, SALES_DEEP_DIVE, FORECAST_PROJECTION, DATA_QUALITY
+  format            String          @default("PDF") // PDF, CSV, XLSX
+  storagePath       String
+  createdAt         DateTime        @default(now())
+
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  datasetVersion    DatasetVersion? @relation(fields: [datasetVersionId], references: [id], onDelete: SetNull)
+  generatedBy       User            @relation(fields: [generatedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([generatedById])
+  @@index([organizationId, createdAt])
+}
+
+model ReportSchedule {
+  id             String       @id @default(uuid())
+  organizationId String
+  title          String
+  cronExpression String       // e.g. "0 9 * * 1" (Every Monday at 9AM)
+  recipientsJson String       @default("[]")
+  reportType     String       @default("EXECUTIVE_SUMMARY")
+  isActive       Boolean      @default(true)
+  lastRunAt      DateTime?
+  nextRunAt      DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Alert {
+  id                String       @id @default(uuid())
+  organizationId    String
+  name              String
+  metricCode        String
+  condition         String       // GREATER_THAN, LESS_THAN, DROPS_BY_PCT, ANOMALY_DETECTED
+  thresholdValue    Float
+  cooldownHours     Int          @default(24)
+  isActive          Boolean      @default(true)
+  lastTriggeredAt   DateTime?
+  createdAt         DateTime     @default(now())
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, isActive])
+}
+
+model Notification {
+  id             String        @id @default(uuid())
+  organizationId String
+  userId         String?
+  title          String
+  message        String
+  type           String        // FORECAST_COMPLETED, ANOMALY_ALERT, DATASET_READY, SECURITY_EVENT, REPORT_READY
+  linkUrl        String?
+  isRead         Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([organizationId, isRead])
+  @@index([userId, isRead])
+  @@index([organizationId, createdAt])
+}
+
+model AuditLog {
+  id             String        @id @default(uuid())
+  organizationId String
+  userId         String?
+  action         String
+  resourceType   String
+  resourceId     String
+  ipAddress      String?
+  userAgent      String?
+  status         String        @default("SUCCESS") // SUCCESS, DENIED, FAILURE
+  metadataJson   String        @default("{}")
+  timestamp      DateTime      @default(now())
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([organizationId, timestamp])
+  @@index([organizationId, action])
+  @@index([organizationId, status])
+}
+
+model Job {
+  id             String        @id @default(uuid())
+  organizationId String
+  jobType        String        // FILE_INGESTION, DATA_PROFILING, FORECAST_RUN, REPORT_EXPORT
+  status         String        @default("QUEUED") // QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED
+  progressPct    Int           @default(0)
+  stepMessage    String        @default("Initialized")
+  payloadJson    String        @default("{}")
+  resultJson     String?
+  errorDetailsJson String?
+  attempts       Int           @default(0)
+  maxAttempts    Int           @default(3)
+  idempotencyKey String?       @unique
+  lockedBy       String?
+  lockedAt       DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([status, createdAt])
+  @@index([organizationId, status])
+  @@index([organizationId, jobType])
+}
+

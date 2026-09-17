@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101b38" />
+    <title>SkillQuest — earn by getting sharper</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#top"><span class="brand-mark">S</span> SkillQuest</a>
+        <nav aria-label="Main navigation">
+          <a class="nav-item active" href="#top">⌂ <span>Home</span></a>
+          <a class="nav-item" href="#challenge">⌘ <span>Challenges</span></a>
+          <a class="nav-item" href="#focus">◉ <span>Focus room</span></a>
+          <a class="nav-item" href="#wallet">◈ <span>Wallet</span></a>
+        </nav>
+        <section class="pro-card">
+          <span class="pro-label">SKILLQUEST PRO</span>
+          <h2>Go deeper, faster.</h2>
+          <p>Mock interviews, skill reports, and guided tracks.</p>
+          <button class="ghost-button" type="button" data-message="Pro waitlist opened — this is a prototype action.">Join waitlist</button>
+        </section>
+        <p class="user"><span>SA</span> Saniya <small>Level 4 Explorer</small></p>
+      </aside>
+
+      <section class="content" id="top">
+        <header>
+          <div>
+            <p class="eyebrow">MONDAY, SEPTEMBER 8</p>
+            <h1>Build the habit. <em>Earn the proof.</em></h1>
+          </div>
+          <button class="bell" type="button" aria-label="Notifications">⌁</button>
+        </header>
+
+        <section class="hero-grid">
+          <article class="streak-card">
+            <p class="eyebrow">YOUR CURRENT STREAK</p>
+            <div class="streak-number">7 <span>days</span></div>
+            <div class="week" aria-label="Seven day streak"><b>M</b><b>T</b><b>W</b><b>T</b><b>F</b><b class="today">S</b><b class="empty">S</b></div>
+            <p>One focused session keeps it alive.</p>
+          </article>
+          <article class="balance-card" id="wallet">
+            <p class="eyebrow">VERIFIED BALANCE</p>
+            <div><strong id="points">240</strong><span> SQ</span></div>
+            <p>100 SQ = ₹1.00 <button class="inline-button" type="button" data-message="Redemption is intentionally disabled in the prototype. Production requires verified identity, fraud controls, payout partner, terms, and tax review.">Why can’t I cash out?</button></p>
+            <div class="progress"><span style="width: 40%"></span></div>
+            <small>260 SQ until your first ₹5 reward</small>
+          </article>
+        </section>
+
+        <section class="mode-section" aria-labelledby="modes-title">
+          <div class="section-heading"><div><p class="eyebrow">CHOOSE YOUR ARENA</p><h2 id="modes-title">What are you improving today?</h2></div><span>All progress is verified</span></div>
+          <div class="mode-grid">
+            <button class="mode-card selected" type="button" data-mode="Learn"><span class="mode-icon purple">⌘</span><strong>Learn coding</strong><small>Build foundations through deliberate practice.</small><i>→</i></button>
+            <button class="mode-card" type="button" data-mode="Interview"><span class="mode-icon orange">↗</span><strong>Interview prep</strong><small>Think aloud through realistic problems.</small><i>→</i></button>
+            <button class="mode-card" type="button" data-mode="Improve"><span class="mode-icon blue">◈</span><strong>Level up</strong><small>Find and close your skill gaps.</small><i>→</i></button>
+          </div>
+        </section>
+
+        <section class="challenge-card" id="challenge">
+          <div class="challenge-copy">
+            <p class="eyebrow">TODAY'S <span id="mode-label">LEARN</span> CHALLENGE · 20 SQ</p>
+            <h2>Find the hidden edge case</h2>
+            <p>A function should return the first non-repeating character in a string. What must it return when every character repeats?</p>
+            <div class="answers" role="group" aria-label="Challenge answer">
+              <button type="button" data-answer="wrong">The last character</button>
+              <button type="button" data-answer="correct">A documented empty value</button>
+              <button type="button" data-answer="wrong">The most common character</button>
+            </div>
+            <p class="feedback" id="feedback" aria-live="polite">Choose the answer that makes the function reliable for callers.</p>
+          </div>
+          <aside class="proof-box">
+            <span class="shield">✓</span><h3>Proof, not taps.</h3>
+            <p>Points are awarded only after an evaluated response—not for opening a task.</p>
+            <a href="#focus">How verification works →</a>
+          </aside>
+        </section>
+
+        <section class="focus-row" id="focus">
+          <div><p class="eyebrow">PRODUCTIVE BROWSING</p><h2>Focus room</h2><p>Open an approved learning resource, set a session, then complete a reflection check to verify meaningful work.</p></div>
+          <button class="primary-button" id="start-focus" type="button">Start 25-min focus</button>
+          <div class="timer" id="timer" hidden>25:00</div>
+        </section>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

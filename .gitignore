@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Environment files
+.env
+.env*.local
+
+# SQLite Database & temporary database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Storage artifacts (uploaded files & generated exports)
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/reports/*
+!storage/reports/.gitkeep
+
+# Python cache & legacy files
+__pycache__/
+*.pyc
+scratch/
+*.tsbuildinfo
+
+# Logs & Debugging
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
