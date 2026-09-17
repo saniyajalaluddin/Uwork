@@ -23,3 +23,4 @@ import "./billing_and_metered_quotas.test";
 import "./compliance_and_data_retention.test";
 import "./system_health_and_automated_backups.test";
 import "./production_hardening_and_packaging.test";
+import "./final_system_handover.test";
