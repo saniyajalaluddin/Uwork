@@ -78,8 +78,10 @@ export default function SettingsPage() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
 
-  // Benefits State
+  // Benefits & Billing State
   const [benefits, setBenefits] = useState<any>(null);
+  const [billingData, setBillingData] = useState<any>(null);
+  const [isUpgradingTier, setIsUpgradingTier] = useState<string | null>(null);
 
   // API Keys State
   const [apiKeys, setApiKeys] = useState<any[]>([]);
@@ -137,12 +139,9 @@ export default function SettingsPage() {
     // Load In-App Notifications
     loadNotifications();
 
-    // Load Benefits
-    fetch("/api/org/benefits")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) setBenefits(data.data.benefits);
-      });
+    // Load Benefits & Billing
+    loadBenefits();
+    loadBilling();
 
     // Load API Keys
     loadApiKeys();
@@ -168,8 +167,10 @@ export default function SettingsPage() {
         if (payload.type === "MEMBER_UPDATED") {
           loadMembers();
           loadInvitations();
-        } else if (payload.type === "ORGANIZATION_UPDATED") {
+        } else if (payload.type === "ORGANIZATION_UPDATED" || payload.type === "SUBSCRIPTION_UPDATED") {
           loadOrg();
+          loadBenefits();
+          loadBilling();
         } else if (payload.type === "NOTIFICATION") {
           loadNotifications();
         }
@@ -242,6 +243,66 @@ export default function SettingsPage() {
         if (data?.success) setApiKeys(data.data.apiKeys || []);
       })
       .catch(() => {});
+  };
+
+  const loadBenefits = () => {
+    fetch("/api/org/benefits")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) setBenefits(data.data.benefits);
+      })
+      .catch(() => {});
+  };
+
+  const loadBilling = () => {
+    fetch("/api/billing")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) setBillingData(data.data);
+      })
+      .catch(() => {});
+  };
+
+  const handleUpgradePlan = async (tier: string) => {
+    setIsUpgradingTier(tier);
+    try {
+      const res = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planTier: tier }),
+      });
+      const data = await res.json();
+      if (data.success && data.data?.url) {
+        if (data.data.isSimulated) {
+          alert(`Simulated Checkout: Successfully upgraded organization to ${tier} tier!`);
+          loadBilling();
+          loadBenefits();
+          loadOrg();
+        } else {
+          window.location.href = data.data.url;
+        }
+      } else {
+        alert(data.error?.message || "Failed to start checkout.");
+      }
+    } catch {
+      alert("Error initiating checkout session.");
+    } finally {
+      setIsUpgradingTier(null);
+    }
+  };
+
+  const handleOpenBillingPortal = async () => {
+    try {
+      const res = await fetch("/api/billing/portal", { method: "POST" });
+      const data = await res.json();
+      if (data.success && data.data?.url) {
+        window.location.href = data.data.url;
+      } else {
+        alert(data.error?.message || "Failed to open billing portal.");
+      }
+    } catch {
+      alert("Error opening billing portal.");
+    }
   };
 
   const handleCreateWebhook = async (e: React.FormEvent) => {
@@ -1186,93 +1247,323 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* TAB 3: ADMIN BENEFITS & QUOTAS */}
+      {/* TAB 3: ADMIN BENEFITS, BILLING & QUOTAS */}
       {activeTab === "benefits" && benefits && (
         <div className="space-y-6">
-          {/* Plan Tier Card */}
+          {/* Past Due Alert Banner */}
+          {billingData?.subscription?.status === "PAST_DUE" && (
+            <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="h-5 w-5 text-red-400 shrink-0" />
+                <div>
+                  <h4 className="text-xs font-bold text-red-400">Subscription Payment Past Due</h4>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Your recent invoice could not be billed. Please update your payment method to avoid operational interruption.
+                  </p>
+                </div>
+              </div>
+              {canManage && (
+                <button
+                  onClick={handleOpenBillingPortal}
+                  className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition whitespace-nowrap"
+                >
+                  Update Payment Method
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Active Subscription Summary Card */}
           <div className="p-6 rounded-xl bg-gradient-to-r from-blue-950/60 via-slate-900 to-indigo-950/60 border border-blue-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-blue-400" />
                 <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">Active Subscription</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                  {billingData?.subscription?.status || benefits.status}
+                </span>
               </div>
               <h2 className="text-xl font-bold text-white">{benefits.planName}</h2>
-              <p className="text-xs text-slate-300">{benefits.billingCycle} • Status: <strong className="text-emerald-400">{benefits.status}</strong></p>
+              <p className="text-xs text-slate-300">
+                Tier: <strong className="text-blue-400">{benefits.planTier}</strong> • {benefits.billingCycle}
+                {billingData?.subscription?.currentPeriodEnd && (
+                  <span> • Renews on {new Date(billingData.subscription.currentPeriodEnd).toLocaleDateString()}</span>
+                )}
+              </p>
             </div>
 
-            <div className="px-4 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-right">
-              <div className="text-[10px] text-slate-400 font-semibold uppercase">Guaranteed Availability</div>
-              <div className="text-lg font-extrabold text-emerald-400">{benefits.quotas.sla}</div>
-            </div>
-          </div>
-
-          {/* Quota Meters */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Row Ingestion Capacity</span>
-                <Database className="h-4 w-4 text-blue-400" />
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="px-4 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-right">
+                <div className="text-[10px] text-slate-400 font-semibold uppercase">Guaranteed SLA</div>
+                <div className="text-lg font-extrabold text-emerald-400">{benefits.quotas.sla}</div>
               </div>
-              <div className="text-xl font-bold text-white">
-                {benefits.quotas.rows.used.toLocaleString()} / 10M
-              </div>
-              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-blue-500 h-full rounded-full" style={{ width: `${Math.max(2, benefits.quotas.rows.pct)}%` }}></div>
-              </div>
-              <div className="text-[10px] text-slate-400">{benefits.quotas.rows.pct}% Allocated</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Object Storage Space</span>
-                <HardDrive className="h-4 w-4 text-purple-400" />
-              </div>
-              <div className="text-xl font-bold text-white">
-                {benefits.quotas.storage.formattedUsed} / {benefits.quotas.storage.formattedLimit}
-              </div>
-              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-purple-500 h-full rounded-full" style={{ width: "2%" }}></div>
-              </div>
-              <div className="text-[10px] text-slate-400">Content-Addressed Storage Active</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Parallel Compute Nodes</span>
-                <Cpu className="h-4 w-4 text-emerald-400" />
-              </div>
-              <div className="text-xl font-bold text-white">
-                {benefits.quotas.computeNodes.allocated} Dedicated Workers
-              </div>
-              <div className="text-[11px] text-emerald-400 mt-1 font-medium">
-                High-Throughput ML Runners
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Team Seat Allocation</span>
-                <Users className="h-4 w-4 text-amber-400" />
-              </div>
-              <div className="text-xl font-bold text-white">
-                {benefits.quotas.teamSeats.used} / {benefits.quotas.teamSeats.limit} Seats
-              </div>
-              <div className="text-[11px] text-slate-400 mt-1">
-                Role-based access controls
-              </div>
+              {canManage && (
+                <button
+                  onClick={handleOpenBillingPortal}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs font-semibold transition"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Billing Portal</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Included Features List */}
-          <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
-            <h3 className="text-sm font-bold text-white">Included Enterprise Benefits</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              {benefits.featuresIncluded.map((feat: string, idx: number) => (
-                <div key={idx} className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-800/40 border border-slate-700/40 text-slate-300">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span>{feat}</span>
+          {/* Subscription Plans & Upgrades Grid */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-white">Subscription Plans & Quota Tiers</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                {
+                  tier: "STARTER",
+                  name: "Starter Tier",
+                  price: "$0",
+                  cadence: "Free Forever",
+                  rows: "50K Rows",
+                  storage: "500 MB Storage",
+                  seats: "3 Team Seats",
+                  forecasts: "25 Forecasts/mo",
+                  features: ["Basic Chart Visuals", "CSV Uploads", "Weekly Email Digests"],
+                },
+                {
+                  tier: "PRO",
+                  name: "Professional Suite",
+                  price: "$299",
+                  cadence: "per month",
+                  rows: "1 Million Rows",
+                  storage: "10 GB Storage",
+                  seats: "15 Team Seats",
+                  forecasts: "500 Forecasts/mo",
+                  popular: true,
+                  features: ["Advanced ARIMA & Holt-Winters", "Outbound Webhooks", "Excel Ingestion", "Custom Alert Rules"],
+                },
+                {
+                  tier: "ENTERPRISE",
+                  name: "Enterprise BI & AI",
+                  price: "$999",
+                  cadence: "per month",
+                  rows: "10 Million Rows",
+                  storage: "100 GB Storage",
+                  seats: "50 Team Seats",
+                  forecasts: "10,000 Forecasts/mo",
+                  features: ["8 Dedicated Workers", "99.99% SLA Guarantee", "7-Year Audit Forensics", "Priority Support"],
+                },
+              ].map((p) => {
+                const isCurrent = (benefits.planTier || "ENTERPRISE").toUpperCase() === p.tier;
+                return (
+                  <div
+                    key={p.tier}
+                    className={`p-5 rounded-xl border flex flex-col justify-between transition ${
+                      isCurrent
+                        ? "bg-blue-950/20 border-blue-500/50 shadow-md shadow-blue-500/10"
+                        : "bg-slate-900/80 border-slate-800"
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-300">{p.name}</span>
+                        {p.popular && !isCurrent && (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-semibold">
+                            Popular
+                          </span>
+                        )}
+                        {isCurrent && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                            Current Plan
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="text-2xl font-extrabold text-white">{p.price}</div>
+                        <div className="text-[11px] text-slate-400">{p.cadence}</div>
+                      </div>
+
+                      <div className="border-t border-slate-800 pt-3 space-y-1.5 text-xs text-slate-300">
+                        <div className="font-semibold text-blue-400 text-[11px]">Included Quotas:</div>
+                        <div>• {p.rows}</div>
+                        <div>• {p.storage}</div>
+                        <div>• {p.seats}</div>
+                        <div>• {p.forecasts}</div>
+                      </div>
+
+                      <div className="border-t border-slate-800 pt-3 space-y-1 text-[11px] text-slate-400">
+                        {p.features.map((f, i) => (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                            <span>{f}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="pt-5">
+                      {isCurrent ? (
+                        <button
+                          disabled
+                          className="w-full py-2 rounded-lg bg-slate-800 text-slate-400 text-xs font-bold cursor-not-allowed"
+                        >
+                          Active Tier
+                        </button>
+                      ) : canManage ? (
+                        <button
+                          onClick={() => handleUpgradePlan(p.tier)}
+                          disabled={isUpgradingTier === p.tier}
+                          className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
+                        >
+                          {isUpgradingTier === p.tier ? "Processing..." : `Switch to ${p.name}`}
+                        </button>
+                      ) : (
+                        <button
+                          disabled
+                          className="w-full py-2 rounded-lg bg-slate-800/60 text-slate-500 text-xs font-medium cursor-not-allowed"
+                        >
+                          Contact Administrator
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Real-time Metered Quota Usage */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-white">Metered Resource Consumption</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Row Ingestion Capacity</span>
+                  <Database className="h-4 w-4 text-blue-400" />
                 </div>
-              ))}
+                <div className="text-xl font-bold text-white">
+                  {benefits.quotas.rows.used.toLocaleString()} / {benefits.quotas.rows.limit.toLocaleString()}
+                </div>
+                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className="bg-blue-500 h-full rounded-full transition-all"
+                    style={{ width: `${Math.max(2, benefits.quotas.rows.pct)}%` }}
+                  ></div>
+                </div>
+                <div className="text-[10px] text-slate-400">{benefits.quotas.rows.pct}% Allocated</div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Object Storage Space</span>
+                  <HardDrive className="h-4 w-4 text-purple-400" />
+                </div>
+                <div className="text-xl font-bold text-white">
+                  {benefits.quotas.storage.formattedUsed} / {benefits.quotas.storage.formattedLimit}
+                </div>
+                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className="bg-purple-500 h-full rounded-full transition-all"
+                    style={{ width: `${Math.max(2, benefits.quotas.storage.pct)}%` }}
+                  ></div>
+                </div>
+                <div className="text-[10px] text-slate-400">{benefits.quotas.storage.pct}% Capacity</div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Team Seat Allocation</span>
+                  <Users className="h-4 w-4 text-amber-400" />
+                </div>
+                <div className="text-xl font-bold text-white">
+                  {benefits.quotas.teamSeats.used} / {benefits.quotas.teamSeats.limit} Seats
+                </div>
+                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className="bg-amber-500 h-full rounded-full transition-all"
+                    style={{ width: `${Math.max(2, benefits.quotas.teamSeats.pct)}%` }}
+                  ></div>
+                </div>
+                <div className="text-[10px] text-slate-400">{benefits.quotas.teamSeats.pct}% Allocated</div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Forecast Quota (Month)</span>
+                  <Activity className="h-4 w-4 text-emerald-400" />
+                </div>
+                <div className="text-xl font-bold text-white">
+                  {benefits.quotas.forecasts.used} / {benefits.quotas.forecasts.limit}
+                </div>
+                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: "10%" }}></div>
+                </div>
+                <div className="text-[10px] text-slate-400">Automated ARIMAX & Backtesting</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Invoices History Table */}
+          <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-white">Billing & Invoices History</h3>
+              <span className="text-[11px] text-slate-400 font-mono">Tax Invoices & Receipts</span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                    <th className="py-2 px-3">Date</th>
+                    <th className="py-2 px-3">Invoice ID</th>
+                    <th className="py-2 px-3">Amount</th>
+                    <th className="py-2 px-3">Status</th>
+                    <th className="py-2 px-3 text-right">Receipt</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                  {billingData?.invoices?.map((inv: any) => (
+                    <tr key={inv.id} className="hover:bg-slate-800/30">
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400">
+                        {new Date(inv.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-white">
+                        {inv.stripeInvoiceId || inv.id.slice(0, 12)}
+                      </td>
+                      <td className="py-2.5 px-3 font-bold text-white">
+                        ${(inv.amountPaidCents / 100).toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            inv.status === "PAID"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : "bg-red-500/20 text-red-400"
+                          }`}
+                        >
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        {inv.hostedInvoiceUrl || inv.invoicePdfUrl ? (
+                          <a
+                            href={inv.hostedInvoiceUrl || inv.invoicePdfUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-1 font-semibold text-[11px]"
+                          >
+                            <span>View</span>
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : (
+                          <span className="text-slate-500 text-[10px]">Receipt Generated</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {(!billingData?.invoices || billingData.invoices.length === 0) && (
+                <div className="py-6 text-center text-slate-500 text-xs">
+                  No billing invoices issued yet. Invoices appear here automatically following monthly subscription renewals.
+                </div>
+              )}
             </div>
           </div>
         </div>

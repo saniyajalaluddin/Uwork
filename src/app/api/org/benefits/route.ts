@@ -21,41 +21,50 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  const usedBytes = storageSum._sum.fileSizeBytes || 1048576;
-  const usedRows = storageSum._sum.rowCount || 24890;
-  const enterpriseQuota = AppConfig.quotas.enterprise;
+  const usedBytes = storageSum._sum.fileSizeBytes || 0;
+  const usedRows = storageSum._sum.rowCount || 0;
+
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { planTier: true, subscriptionStatus: true },
+  });
+
+  const { getPlanQuotas } = await import("@/services/quota.service");
+  const quota = getPlanQuotas(org?.planTier);
 
   const benefits = {
-    planTier: enterpriseQuota.planTier,
-    planName: enterpriseQuota.planName,
-    status: "ACTIVE",
-    billingCycle: "Annual (Enterprise Agreement)",
+    planTier: quota.planTier,
+    planName: quota.planName,
+    status: org?.subscriptionStatus || "ACTIVE",
+    billingCycle: "Monthly / Annual Subscription",
     quotas: {
       rows: {
         used: usedRows,
-        limit: enterpriseQuota.maxRows,
-        pct: Math.round((usedRows / enterpriseQuota.maxRows) * 1000) / 10,
+        limit: quota.maxRows,
+        pct: Math.min(100, Math.round((usedRows / quota.maxRows) * 1000) / 10),
       },
       storage: {
         usedBytes: usedBytes,
-        limitBytes: enterpriseQuota.maxStorageBytes,
+        limitBytes: quota.maxStorageBytes,
         formattedUsed: `${(usedBytes / (1024 * 1024)).toFixed(2)} MB`,
-        formattedLimit: enterpriseQuota.maxStorageFormatted,
+        formattedLimit: quota.maxStorageFormatted,
+        pct: Math.min(100, Math.round((usedBytes / quota.maxStorageBytes) * 1000) / 10),
       },
       teamSeats: {
         used: totalMembers,
-        limit: enterpriseQuota.maxTeamSeats,
+        limit: quota.maxTeamSeats,
+        pct: Math.min(100, Math.round((totalMembers / quota.maxTeamSeats) * 1000) / 10),
       },
       forecasts: {
         used: totalForecasts,
-        limit: "Unlimited",
+        limit: quota.maxForecastsPerMonth,
       },
       computeNodes: {
-        allocated: enterpriseQuota.computeNodesAllocated,
+        allocated: quota.computeNodesAllocated,
         type: "Dedicated High-Throughput Numerical Workers",
       },
-      auditRetention: enterpriseQuota.auditRetention,
-      sla: enterpriseQuota.slaAvailability,
+      auditRetention: quota.auditRetention,
+      sla: quota.slaAvailability,
     },
     featuresIncluded: [
       "Multi-Model Time-Series Tournament (Holt-Winters, ARIMA, Random Forest)",

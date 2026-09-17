@@ -37,6 +37,9 @@ export async function POST(req: NextRequest) {
       return errorResponse("Webhook name and target URL are required.", 400);
     }
 
+    const { assertWithinQuota } = await import("@/services/quota.service");
+    await assertWithinQuota(orgId, "WEBHOOKS", 1);
+
     const webhook = await createWebhookSubscription({
       organizationId: orgId,
       name,

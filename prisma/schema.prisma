@@ -65,6 +65,18 @@ model Organization {
   jobs           Job[]
   webhooks       WebhookSubscription[]
   webhookDeliveries WebhookDelivery[]
+
+  // Stripe & Subscription Lifecycle (Phase 20)
+  stripeCustomerId     String?               @unique
+  stripeSubscriptionId String?               @unique
+  stripePriceId        String?
+  subscriptionStatus   String?               @default("ACTIVE") // ACTIVE, TRIALING, PAST_DUE, CANCELED, INCOMPLETE
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean               @default(false)
+
+  invoices             SubscriptionInvoice[]
+  meteredUsage         MeteredUsageRecord[]
 }
 
 model OrganizationMember {
@@ -670,5 +682,43 @@ model WebhookDelivery {
   @@index([status, nextRetryAt])
   @@index([organizationId, createdAt])
 }
+
+// --------------------------------------------------------
+// Billing, Invoices & Metered Consumption (Phase 20)
+// --------------------------------------------------------
+
+model SubscriptionInvoice {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  stripeInvoiceId    String?      @unique
+  amountPaidCents    Int          @default(0)
+  currency           String       @default("usd")
+  status             String       @default("PAID") // PAID, OPEN, VOID, UNCOLLECTIBLE
+  invoicePdfUrl      String?
+  hostedInvoiceUrl   String?
+  periodStart        DateTime?
+  periodEnd          DateTime?
+  paidAt             DateTime?
+  createdAt          DateTime     @default(now())
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([stripeInvoiceId])
+}
+
+model MeteredUsageRecord {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  metricKey          String       // ROWS_INGESTED, STORAGE_BYTES, FORECASTS_COMPUTED, TEAM_SEATS, API_CALLS
+  quantity           Int          @default(0)
+  billingPeriod      String       // e.g. "2026-09"
+  recordedAt         DateTime     @default(now())
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, metricKey, billingPeriod])
+}
+
 
 

@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
       return errorResponse("Recipient email address is required.", 400);
     }
 
+    const { assertWithinQuota } = await import("@/services/quota.service");
+    await assertWithinQuota(orgId, "TEAM_SEATS", 1);
+
     const result = await createInvitation({
       organizationId: orgId,
       email,

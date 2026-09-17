@@ -19,3 +19,4 @@ import "./report_exports_and_scheduled_digests.test";
 import "./decision_center_and_lifecycle.test";
 import "./organization_and_team_governance.test";
 import "./webhooks_and_notifications.test";
+import "./billing_and_metered_quotas.test";
