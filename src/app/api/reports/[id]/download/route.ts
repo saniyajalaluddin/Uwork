@@ -28,8 +28,15 @@ export async function GET(
 
   try {
     const fileBuffer = await readStorageFile(report.storagePath);
-    const contentType = report.format === "JSON" ? "application/json" : "text/csv";
-    const filename = `${report.title.replace(/[^a-zA-Z0-9_-]/g, "_")}.${report.format.toLowerCase()}`;
+    let contentType = "text/csv";
+    if (report.format === "JSON") {
+      contentType = "application/json";
+    } else if (report.format === "HTML") {
+      contentType = "text/html; charset=utf-8";
+    }
+
+    const ext = report.format.toLowerCase();
+    const filename = `${report.title.replace(/[^a-zA-Z0-9_-]/g, "_")}.${ext}`;
 
     return new NextResponse(new Uint8Array(fileBuffer), {
       status: 200,

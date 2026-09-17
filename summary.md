@@ -645,3 +645,43 @@ In strict adherence to the senior engineering production hardening roadmap, Phas
      3. Alerts REST API enforces full CRUD and cross-tenant IDOR attack isolation (404 on alien access).
      4. Server-Sent Events (SSE) route connects and delivers live stream messages with proper headers and handshake.
    - Master test suite expanded to **90 passing automated tests** with 0 failures across 15 test files (`npm test`).
+
+---
+
+## 25. Phase 16 — Report Export Engine & Scheduled Digests
+
+1. **Multi-Format & Specialized Domain Report Generation** (`src/services/report.service.ts`):
+   - Expanded report export engine to support 4 specialized intelligence domains:
+     - `EXECUTIVE_SUMMARY`: Executive KPIs, 5-pillar health score breakdown, and prioritized decision center recommendations.
+     - `SALES_DEEP_DIVE`: Sales pipeline volume, weighted pipeline, conversion win rates, deal size distributions, and sales representative rankings.
+     - `FORECAST_PROJECTION`: Model tournament rankings, champion model metrics, and forward projected predictions with 95% confidence intervals.
+     - `DATA_QUALITY`: Comprehensive dataset catalog, schema definitions, inferred business roles, null counts, unique cardinality, and quality score percentages.
+   - Built multi-format exporters in `CSV` (with formula injection defense via `sanitizeSpreadsheetCell`), structured `JSON`, and standalone printable `HTML` with executive dark/light styling and print stylesheets.
+
+2. **Automated Scheduled Digests & 5-Field Cron Engine** (`src/services/report.service.ts`):
+   - Implemented `computeNextRun(cronExpression, fromDate)` supporting standard 5-part cron syntax (`minute hour dom month dow`):
+     - Daily at specific hour (`0 9 * * *`), Weekly on specific days (`0 9 * * 1`), Monthly (`0 0 1 * *`), Hourly (`0 * * * *`), and minute intervals (`*/15 * * * *`).
+   - Built `executeScheduledDigests(targetOrgId?, targetScheduleId?)`:
+     - Queries due active schedules, triggers report generation, simulates recipient delivery, creates `REPORT_READY` notifications, advances `lastRunAt` and `nextRunAt`, and dispatches real-time SSE events.
+   - Built full CRUD operations for `ReportSchedule` with strict multi-tenant isolation.
+
+3. **Multi-Tenant REST APIs for Reports and Schedules**:
+   - `src/app/api/reports/route.ts`: `POST` (create on-demand report), `GET` (list reports with type/format filters), `DELETE` (delete report and purge disk storage via `deleteStorageFile`).
+   - `src/app/api/reports/[id]/download/route.ts`: Scoped download with correct MIME headers (`text/csv`, `application/json`, `text/html`).
+   - `src/app/api/reports/schedules/route.ts`: `GET` (list schedules), `POST` (create schedule), `PATCH` (update schedule / toggle active state), `DELETE` (delete schedule).
+   - `src/app/api/reports/schedules/run/route.ts`: `POST` (trigger on-demand execution of due schedules).
+
+4. **Upgraded Reports UI** (`src/app/(dashboard)/reports/page.tsx`):
+   - Tabbed interface separating *Generated Reports* and *Scheduled Digests*.
+   - Quick generation buttons for Executive CSV, Executive HTML, Sales Deep Dive, and Forecast JSON.
+   - Instant filtering by Report Type and Format.
+   - Real-time `EventSource` connection listening for `REPORT_READY` SSE events for automatic list synchronization.
+   - Modal to configure recurring schedules with cron presets, report types, and recipient emails.
+
+5. **Phase 16 Automated Test Suite** (`tests/report_exports_and_scheduled_digests.test.ts`):
+   - 4 automated test scenarios:
+     1. Multi-Format Report Engine generates CSV with formula defense and styled HTML.
+     2. Generates specialized domain reports (Sales Deep Dive & Data Quality).
+     3. Report download and deletion enforce strict cross-tenant IDOR protection (404 on alien access, storage file deletion on success).
+     4. Cron engine parses schedules and `executeScheduledDigests` delivers digests with in-app notifications and next run calculations.
+   - Master test suite expanded to **95 passing automated tests** with 0 failures across 16 test files (`npm test`).

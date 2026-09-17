@@ -15,3 +15,4 @@ import "./observability_and_tracing.test";
 import "./database_indexing_and_transactions.test";
 import "./streaming_ingestion_and_chunked_profiling.test";
 import "./realtime_sse_and_alerting.test";
+import "./report_exports_and_scheduled_digests.test";
