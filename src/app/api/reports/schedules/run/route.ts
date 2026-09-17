@@ -22,3 +22,4 @@ export async function POST(req: NextRequest) {
     return errorResponse("Failed to execute scheduled digests.", 500);
   }
 }
+

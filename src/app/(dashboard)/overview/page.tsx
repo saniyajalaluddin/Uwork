@@ -89,7 +89,14 @@ export default function OverviewPage() {
     }
   };
 
-  const executeDecisionAction = (decision: any) => {
+  const executeDecisionAction = async (decision: any) => {
+    try {
+      await fetch("/api/decisions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: decision.id, status: "ACKNOWLEDGED" }),
+      });
+    } catch {}
     setActionSuccessToast(`Workflow dispatched for: "${decision.title}". Automated alert sent to operations team.`);
     setTimeout(() => {
       setActionSuccessToast(null);

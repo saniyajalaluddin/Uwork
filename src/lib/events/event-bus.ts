@@ -13,7 +13,8 @@ export type SSEEventType =
   | "FORECAST_COMPLETED"
   | "ANOMALY_ALERT"
   | "HEALTH_SCORE_UPDATED"
-  | "REPORT_READY";
+  | "REPORT_READY"
+  | "DECISION_UPDATED";
 
 export interface SSEEvent<T = any> {
   id: string;

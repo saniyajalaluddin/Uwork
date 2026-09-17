@@ -95,3 +95,4 @@ export async function DELETE(req: NextRequest) {
 
   return successResponse({ message: "Report schedule deleted successfully.", id });
 }
+
