@@ -89,7 +89,7 @@ export async function runCanaryDiagnostics(): Promise<CanaryDiagnosticsReport> {
         status: storageLatency > 200 ? "WARN" : "PASS",
         latencyMs: parseFloat(storageLatency.toFixed(2)),
         message: "Storage read/write roundtrip verified",
-        details: { driver: AppConfig.storage.driver, tempPath: tempFilePath },
+        details: { driver: process.env.STORAGE_DRIVER || "local", tempPath: tempFilePath },
       };
     }
   } catch (err: any) {
@@ -214,4 +214,3 @@ export async function runCanaryDiagnostics(): Promise<CanaryDiagnosticsReport> {
     },
   };
 }
-
