@@ -26,6 +26,7 @@ model User {
   updatedAt         DateTime             @updatedAt
 
   memberships       OrganizationMember[]
+  sentInvitations   OrganizationInvitation[]
   sessions          Session[]
   passwordResets    PasswordResetToken[]
   emailTokens       EmailVerificationToken[]
@@ -45,6 +46,7 @@ model Organization {
   updatedAt      DateTime             @updatedAt
 
   members        OrganizationMember[]
+  invitations    OrganizationInvitation[]
   sessions       Session[]
   datasets       Dataset[]
   metrics        Metric[]
@@ -76,6 +78,26 @@ model OrganizationMember {
   @@unique([organizationId, userId])
   @@index([organizationId])
   @@index([userId])
+}
+
+model OrganizationInvitation {
+  id             String       @id @default(uuid())
+  organizationId String
+  email          String
+  role           String       @default("ANALYST") // ADMIN, ANALYST, VIEWER
+  tokenHash      String       @unique
+  invitedById    String
+  status         String       @default("PENDING") // PENDING, ACCEPTED, REVOKED, EXPIRED
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy      User         @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([status])
 }
 
 model Session {

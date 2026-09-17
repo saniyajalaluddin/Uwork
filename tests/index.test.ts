@@ -17,3 +17,4 @@ import "./streaming_ingestion_and_chunked_profiling.test";
 import "./realtime_sse_and_alerting.test";
 import "./report_exports_and_scheduled_digests.test";
 import "./decision_center_and_lifecycle.test";
+import "./organization_and_team_governance.test";

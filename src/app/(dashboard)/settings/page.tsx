@@ -20,10 +20,15 @@ import {
   Server,
   Layers,
   Copy,
+  Mail,
+  Link2,
+  Clock,
+  ExternalLink,
+  ShieldAlert,
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"profile" | "members" | "benefits" | "apikeys" | "audit">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "audit">("profile");
 
   // Profile State
   const [profile, setProfile] = useState<any>(null);
@@ -36,13 +41,22 @@ export default function SettingsPage() {
   const [profileMessage, setProfileMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [passwordMessage, setPasswordMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // Members State
+  // Organization & Governance State
+  const [orgData, setOrgData] = useState<any>(null);
+  const [orgName, setOrgName] = useState("");
+  const [orgSlug, setOrgSlug] = useState("");
+  const [orgMessage, setOrgMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [confirmDeleteSlug, setConfirmDeleteSlug] = useState("");
+  const [isDeletingOrg, setIsDeletingOrg] = useState(false);
+
+  // Members & Invitations State
   const [members, setMembers] = useState<any[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteFirstName, setInviteFirstName] = useState("");
-  const [inviteLastName, setInviteLastName] = useState("");
   const [inviteRole, setInviteRole] = useState("ANALYST");
-  const [memberMessage, setMemberMessage] = useState<string | null>(null);
+  const [memberMessage, setMemberMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [invitations, setInvitations] = useState<any[]>([]);
+  const [createdInviteLink, setCreatedInviteLink] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Benefits State
   const [benefits, setBenefits] = useState<any>(null);
@@ -57,6 +71,7 @@ export default function SettingsPage() {
   const [sessions, setSessions] = useState<any[]>([]);
 
   const canManage = ["OWNER", "ADMIN"].includes(userRole);
+  const isOwner = userRole === "OWNER";
 
   // Initial Loaders
   useEffect(() => {
@@ -87,20 +102,26 @@ export default function SettingsPage() {
         if (data.success) setSessions(data.data.sessions || []);
       });
 
-    // Load Members (now available to all authenticated org members)
+    // Load Organization Profile
+    loadOrg();
+
+    // Load Members
     loadMembers();
 
-    // Load Benefits (available to all org members)
+    // Load Invitations
+    loadInvitations();
+
+    // Load Benefits
     fetch("/api/org/benefits")
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setBenefits(data.data.benefits);
       });
 
-    // Load API Keys (safely)
+    // Load API Keys
     loadApiKeys();
 
-    // Load Audit (safely)
+    // Load Audit
     fetch("/api/audit-logs")
       .then((res) => {
         if (res.ok) return res.json();
@@ -112,11 +133,52 @@ export default function SettingsPage() {
       .catch(() => {});
   }, []);
 
+  // Real-time SSE synchronization
+  useEffect(() => {
+    const es = new EventSource("/api/events/sse");
+    es.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "MEMBER_UPDATED") {
+          loadMembers();
+          loadInvitations();
+        } else if (payload.type === "ORGANIZATION_UPDATED") {
+          loadOrg();
+        }
+      } catch {}
+    };
+    return () => {
+      es.close();
+    };
+  }, []);
+
+  const loadOrg = () => {
+    fetch("/api/org")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) {
+          setOrgData(data.data.organization);
+          setOrgName(data.data.organization.name || "");
+          setOrgSlug(data.data.organization.slug || "");
+        }
+      })
+      .catch(() => {});
+  };
+
   const loadMembers = () => {
     fetch("/api/org/members")
       .then((res) => res.json())
       .then((data) => {
         if (data.success) setMembers(data.data.members || []);
+      })
+      .catch(() => {});
+  };
+
+  const loadInvitations = () => {
+    fetch("/api/org/invitations")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) setInvitations(data.data.invitations || []);
       })
       .catch(() => {});
   };
@@ -183,32 +245,102 @@ export default function SettingsPage() {
     }
   };
 
+  const handleUpdateOrg = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOrgMessage(null);
+    try {
+      const res = await fetch("/api/org", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: orgName, slug: orgSlug }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOrgMessage({ type: "success", text: "Organization profile updated successfully!" });
+        loadOrg();
+      } else {
+        setOrgMessage({ type: "error", text: data.error?.message || "Failed to update organization." });
+      }
+    } catch {
+      setOrgMessage({ type: "error", text: "Network error updating organization." });
+    }
+  };
+
+  const handleDeleteOrg = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (confirmDeleteSlug !== orgData?.slug) {
+      alert("Please type the exact organization slug to confirm deletion.");
+      return;
+    }
+    if (!confirm(`CAUTION: Deleting '${orgData?.name}' is irreversible. All datasets, forecasts, alerts, and team associations will be destroyed. Proceed?`)) {
+      return;
+    }
+    setIsDeletingOrg(true);
+    try {
+      const res = await fetch("/api/org", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmationSlug: confirmDeleteSlug }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("Organization deleted successfully. Redirecting to login...");
+        window.location.href = "/login";
+      } else {
+        alert(data.error?.message || "Failed to delete organization.");
+        setIsDeletingOrg(false);
+      }
+    } catch {
+      alert("Error deleting organization.");
+      setIsDeletingOrg(false);
+    }
+  };
+
   const handleInviteMember = async (e: React.FormEvent) => {
     e.preventDefault();
     setMemberMessage(null);
+    setCreatedInviteLink(null);
+    setCopiedLink(false);
     try {
-      const res = await fetch("/api/org/members", {
+      const res = await fetch("/api/org/invitations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: inviteEmail,
-          firstName: inviteFirstName,
-          lastName: inviteLastName,
           role: inviteRole,
+          expiresInDays: 7,
         }),
       });
       const data = await res.json();
       if (data.success) {
         setInviteEmail("");
-        setInviteFirstName("");
-        setInviteLastName("");
-        loadMembers();
-        setMemberMessage("Member invited successfully!");
+        loadInvitations();
+        const origin = typeof window !== "undefined" ? window.location.origin : "";
+        const fullLink = `${origin}${data.data.invitationLink}`;
+        setCreatedInviteLink(fullLink);
+        setMemberMessage({ type: "success", text: "Cryptographic invitation generated! Valid for 7 days." });
       } else {
-        setMemberMessage(data.error?.message || "Failed to invite member.");
+        setMemberMessage({ type: "error", text: data.error?.message || "Failed to create invitation." });
       }
     } catch {
-      setMemberMessage("Error inviting member.");
+      setMemberMessage({ type: "error", text: "Network error creating invitation." });
+    }
+  };
+
+  const handleRevokeInvite = async (invitationId: string) => {
+    if (!confirm("Revoke this invitation? The recipient will not be able to join.")) return;
+    try {
+      const res = await fetch(`/api/org/invitations?id=${invitationId}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadInvitations();
+      } else {
+        alert(data.error?.message || "Failed to revoke invitation.");
+      }
+    } catch {
+      alert("Error revoking invitation.");
     }
   };
 
@@ -293,6 +425,7 @@ export default function SettingsPage() {
       <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
         {[
           { id: "profile", label: "Profile & Password", icon: User },
+          { id: "org", label: "Organization & Governance", icon: Building },
           { id: "members", label: "Team & Member Access", icon: Users },
           { id: "benefits", label: "Admin Benefits & Quotas", icon: Shield },
           { id: "apikeys", label: "API Keys & Developers", icon: Key },
@@ -485,57 +618,212 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* TAB 2: MEMBER MANAGEMENT */}
-      {activeTab === "members" && (
+      {/* TAB 2: ORGANIZATION & GOVERNANCE */}
+      {activeTab === "org" && (
         <div className="space-y-6">
-          {/* Invite Member Box (Admins only) */}
-          {canManage ? (
-            <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
-              <div className="flex items-center gap-2">
-                <Plus className="h-5 w-5 text-blue-400" />
-                <h3 className="text-sm font-bold text-white">Invite Team Member</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Organization Profile Settings */}
+            <div className="lg:col-span-2 p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Building className="h-5 w-5 text-blue-400" />
+                  <h2 className="text-sm font-bold text-white">Organization Profile & Brand Identity</h2>
+                </div>
+                {orgData?.planTier && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] font-bold">
+                    {orgData.planTier} TIER
+                  </span>
+                )}
               </div>
 
-              {memberMessage && (
-                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300">
-                  {memberMessage}
+              {orgMessage && (
+                <div
+                  className={`p-3 rounded-lg text-xs ${
+                    orgMessage.type === "success"
+                      ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"
+                      : "bg-red-500/10 border border-red-500/20 text-red-400"
+                  }`}
+                >
+                  {orgMessage.text}
                 </div>
               )}
 
-              <form onSubmit={handleInviteMember} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+              <form onSubmit={handleUpdateOrg} className="space-y-4 text-xs">
                 <div>
-                  <label className="block text-slate-400 mb-1 font-semibold">Email Address</label>
+                  <label className="block font-semibold text-slate-400 mb-1">Organization Display Name</label>
+                  <input
+                    type="text"
+                    value={orgName}
+                    onChange={(e) => setOrgName(e.target.value)}
+                    disabled={!canManage}
+                    placeholder="Acme Analytics Global"
+                    required
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none focus:border-blue-500 transition disabled:opacity-60"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Appears on executive reports and shared digests.</p>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-400 mb-1">Unique URL Slug / Tenant Identifier</label>
+                  <div className="flex items-center">
+                    <span className="px-3 py-2 rounded-l-lg bg-slate-900 border border-r-0 border-slate-800 text-slate-500 text-xs font-mono">
+                      app.uwork.ai/
+                    </span>
+                    <input
+                      type="text"
+                      value={orgSlug}
+                      onChange={(e) => setOrgSlug(e.target.value)}
+                      disabled={!canManage}
+                      placeholder="acme-corp"
+                      required
+                      className="flex-1 px-3 py-2 rounded-r-lg bg-slate-950 border border-slate-700/60 text-slate-200 font-mono outline-none focus:border-blue-500 transition disabled:opacity-60"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Lowercase alphanumeric characters and hyphens only. Used for routing and SSO isolation.
+                  </p>
+                </div>
+
+                {canManage && (
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-lg shadow-blue-600/20 transition text-xs"
+                  >
+                    Save Organization Changes
+                  </button>
+                )}
+              </form>
+            </div>
+
+            {/* Organization Metadata Card */}
+            <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+              <h3 className="text-sm font-bold text-white">Tenant Governance Info</h3>
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Tenant Identifier (UUID)</div>
+                  <div className="font-mono text-slate-300 text-[11px] truncate mt-0.5">{orgData?.id || "Loading..."}</div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Organization Owner(s)</div>
+                  <div className="space-y-1 mt-1">
+                    {orgData?.owners?.map((owner: any) => (
+                      <div key={owner.userId} className="text-slate-300 font-medium">
+                        {owner.name} <span className="text-[10px] text-slate-500">({owner.email})</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                  <div className="text-[10px] text-slate-500 uppercase font-semibold">Provisioned Timestamp</div>
+                  <div className="text-slate-300 mt-0.5">
+                    {orgData?.createdAt ? new Date(orgData.createdAt).toLocaleDateString() : "—"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Danger Zone: Organization Deletion Safeguard */}
+          {isOwner && (
+            <div className="p-6 rounded-xl bg-red-950/20 border border-red-500/30 space-y-4">
+              <div className="flex items-center gap-2 text-red-400">
+                <ShieldAlert className="h-5 w-5" />
+                <h3 className="text-sm font-bold text-white">Danger Zone: Organization Deletion Safeguard</h3>
+              </div>
+              <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                Deleting an organization is permanently destructive. All datasets, historical forecasts, custom anomaly alerts,
+                scheduled digests, and member memberships will be immediately purged. To confirm, type your organization slug{" "}
+                <code className="px-1.5 py-0.5 rounded bg-slate-950 font-mono text-red-300 border border-red-500/40">
+                  {orgData?.slug}
+                </code>{" "}
+                below.
+              </p>
+
+              <form onSubmit={handleDeleteOrg} className="flex flex-wrap items-center gap-3 text-xs max-w-md">
+                <input
+                  type="text"
+                  value={confirmDeleteSlug}
+                  onChange={(e) => setConfirmDeleteSlug(e.target.value)}
+                  placeholder={`Type "${orgData?.slug}" to confirm`}
+                  className="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-red-500/40 text-red-200 font-mono outline-none focus:border-red-500 transition"
+                />
+                <button
+                  type="submit"
+                  disabled={confirmDeleteSlug !== orgData?.slug || isDeletingOrg}
+                  className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-semibold transition"
+                >
+                  {isDeletingOrg ? "Purging..." : "Permanently Delete"}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: MEMBER MANAGEMENT & INVITATIONS */}
+      {activeTab === "members" && (
+        <div className="space-y-6">
+          {/* Invite Member Box (Admins & Owners only) */}
+          {canManage ? (
+            <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-5 w-5 text-blue-400" />
+                  <h3 className="text-sm font-bold text-white">Generate Cryptographic Team Invitation</h3>
+                </div>
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5 text-blue-400" /> 7-Day Expiring SHA-256 Token
+                </span>
+              </div>
+
+              {memberMessage && (
+                <div
+                  className={`p-3 rounded-lg text-xs ${
+                    memberMessage.type === "success"
+                      ? "bg-blue-500/10 border border-blue-500/20 text-blue-300"
+                      : "bg-red-500/10 border border-red-500/20 text-red-400"
+                  }`}
+                >
+                  {memberMessage.text}
+                </div>
+              )}
+
+              {createdInviteLink && (
+                <div className="p-4 rounded-xl bg-blue-950/30 border border-blue-500/30 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" /> Shareable Secure Invitation Link:
+                    </span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(createdInviteLink);
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2500);
+                      }}
+                      className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-white px-2 py-1 rounded bg-slate-900 border border-slate-800 transition"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      <span>{copiedLink ? "Copied!" : "Copy Link"}</span>
+                    </button>
+                  </div>
+                  <div className="p-2 rounded bg-slate-950 font-mono text-[11px] text-slate-300 select-all break-all border border-slate-800">
+                    {createdInviteLink}
+                  </div>
+                </div>
+              )}
+
+              <form onSubmit={handleInviteMember} className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="sm:col-span-2">
+                  <label className="block text-slate-400 mb-1 font-semibold">Recipient Enterprise Email</label>
                   <input
                     type="email"
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="teammate@apex.com"
+                    placeholder="analyst@company.com"
                     required
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1 font-semibold">First Name</label>
-                  <input
-                    type="text"
-                    value={inviteFirstName}
-                    onChange={(e) => setInviteFirstName(e.target.value)}
-                    placeholder="Alex"
-                    required
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-slate-400 mb-1 font-semibold">Last Name</label>
-                  <input
-                    type="text"
-                    value={inviteLastName}
-                    onChange={(e) => setInviteLastName(e.target.value)}
-                    placeholder="Taylor"
-                    required
-                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none"
+                    className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none focus:border-blue-500 transition"
                   />
                 </div>
 
@@ -545,7 +833,7 @@ export default function SettingsPage() {
                     <select
                       value={inviteRole}
                       onChange={(e) => setInviteRole(e.target.value)}
-                      className="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none"
+                      className="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700/60 text-slate-200 outline-none focus:border-blue-500 transition"
                     >
                       <option value="ADMIN">Admin</option>
                       <option value="ANALYST">Analyst</option>
@@ -553,7 +841,7 @@ export default function SettingsPage() {
                     </select>
                     <button
                       type="submit"
-                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold shrink-0 transition"
+                      className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold shrink-0 transition shadow-lg shadow-blue-600/20"
                     >
                       Send Invite
                     </button>
@@ -575,7 +863,73 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {/* Members Table */}
+          {/* Pending Invitations Table (Admins only) */}
+          {canManage && invitations.length > 0 && (
+            <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-amber-400" />
+                  <span>Pending Invitations ({invitations.filter((i) => i.status === "PENDING").length})</span>
+                </h3>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                      <th className="py-2 px-3">Invited Email</th>
+                      <th className="py-2 px-3">Assigned Role</th>
+                      <th className="py-2 px-3">Status</th>
+                      <th className="py-2 px-3">Expires</th>
+                      <th className="py-2 px-3">Invited By</th>
+                      <th className="py-2 px-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                    {invitations.map((inv) => (
+                      <tr key={inv.id} className="hover:bg-slate-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono text-white text-[11px]">{inv.email}</td>
+                        <td className="py-2.5 px-3">
+                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold text-[10px]">
+                            {inv.role}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              inv.status === "PENDING"
+                                ? "bg-amber-500/20 text-amber-400"
+                                : inv.status === "ACCEPTED"
+                                ? "bg-emerald-500/20 text-emerald-400"
+                                : "bg-slate-800 text-slate-400"
+                            }`}
+                          >
+                            {inv.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400 text-[11px]">
+                          {new Date(inv.expiresAt).toLocaleDateString()}
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400">{inv.invitedBy}</td>
+                        <td className="py-2.5 px-3 text-right">
+                          {inv.status === "PENDING" && (
+                            <button
+                              onClick={() => handleRevokeInvite(inv.id)}
+                              className="text-red-400 hover:text-red-300 text-xs px-2 py-0.5 rounded hover:bg-red-500/10 transition"
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Active Members Table */}
           <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
             <h3 className="text-sm font-bold text-white">Active Organization Members ({members.length})</h3>
 
@@ -590,59 +944,65 @@ export default function SettingsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                  {members.map((m) => (
-                    <tr key={m.membershipId} className="hover:bg-slate-800/30 transition">
-                      <td className="py-3 px-3">
-                        <div className="font-semibold text-white flex items-center gap-2">
-                          <span>{m.name}</span>
-                          {m.isCurrentUser && (
-                            <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 text-[9px]">You</span>
+                  {members.map((m) => {
+                    const isTargetOwner = m.role === "OWNER";
+                    const canModifyThisMember = canManage && (!isTargetOwner || isOwner);
+
+                    return (
+                      <tr key={m.membershipId} className="hover:bg-slate-800/30 transition">
+                        <td className="py-3 px-3">
+                          <div className="font-semibold text-white flex items-center gap-2">
+                            <span>{m.name}</span>
+                            {m.isCurrentUser && (
+                              <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 text-[9px]">You</span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400">{m.email}</div>
+                        </td>
+
+                        <td className="py-3 px-3">
+                          {isTargetOwner && !isOwner ? (
+                            <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold text-[10px]">
+                              OWNER
+                            </span>
+                          ) : canModifyThisMember ? (
+                            <select
+                              value={m.role}
+                              onChange={(e) => handleUpdateRole(m.membershipId, e.target.value)}
+                              className="bg-slate-950 border border-slate-700/60 text-slate-200 text-xs rounded px-2 py-1 outline-none focus:border-blue-500 transition"
+                            >
+                              {isOwner && <option value="OWNER">OWNER</option>}
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="ANALYST">ANALYST</option>
+                              <option value="VIEWER">VIEWER</option>
+                            </select>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold text-[10px]">
+                              {m.role}
+                            </span>
                           )}
-                        </div>
-                        <div className="text-[11px] text-slate-400">{m.email}</div>
-                      </td>
+                        </td>
 
-                      <td className="py-3 px-3">
-                        {m.role === "OWNER" ? (
-                          <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold text-[10px]">
-                            OWNER
-                          </span>
-                        ) : canManage ? (
-                          <select
-                            value={m.role}
-                            onChange={(e) => handleUpdateRole(m.membershipId, e.target.value)}
-                            className="bg-slate-950 border border-slate-700/60 text-slate-200 text-xs rounded px-2 py-1 outline-none"
-                          >
-                            <option value="ADMIN">ADMIN</option>
-                            <option value="ANALYST">ANALYST</option>
-                            <option value="VIEWER">VIEWER</option>
-                          </select>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold text-[10px]">
-                            {m.role}
-                          </span>
-                        )}
-                      </td>
+                        <td className="py-3 px-3 text-slate-400">
+                          {new Date(m.joinedAt).toLocaleDateString()}
+                        </td>
 
-                      <td className="py-3 px-3 text-slate-400">
-                        {new Date(m.joinedAt).toLocaleDateString()}
-                      </td>
-
-                      <td className="py-3 px-3 text-right">
-                        {canManage && m.role !== "OWNER" && !m.isCurrentUser ? (
-                          <button
-                            onClick={() => handleRemoveMember(m.membershipId)}
-                            className="text-red-400 hover:text-red-300 transition p-1"
-                            title="Remove Member"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        ) : (
-                          <span className="text-slate-500 text-[10px]">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="py-3 px-3 text-right">
+                          {canModifyThisMember && !m.isCurrentUser && (!isTargetOwner || isOwner) ? (
+                            <button
+                              onClick={() => handleRemoveMember(m.membershipId)}
+                              className="text-red-400 hover:text-red-300 transition p-1 rounded hover:bg-red-500/10"
+                              title="Remove Member"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <span className="text-slate-500 text-[10px]">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

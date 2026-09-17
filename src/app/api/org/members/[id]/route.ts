@@ -1,7 +1,10 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db/prisma";
 import { requirePermission } from "@/lib/api/middleware";
 import { successResponse, errorResponse } from "@/lib/api/response";
+import {
+  updateMemberRoleSafe,
+  removeMemberSafe,
+} from "@/services/organization.service";
 
 export async function PATCH(
   req: NextRequest,
@@ -12,58 +15,34 @@ export async function PATCH(
 
   const { id } = await params;
   const orgId = auth.context.organization.id;
+  const requestingUserId = auth.context.user.id;
+  const requestingUserRole = auth.context.role;
 
   try {
     const body = await req.json();
     const { role } = body;
 
-    if (!["ADMIN", "ANALYST", "VIEWER", "OWNER"].includes(role)) {
-      return errorResponse("Invalid role specified.", 400);
+    if (!role) {
+      return errorResponse("New role is required.", 400);
     }
 
-    const membership = await prisma.organizationMember.findFirst({
-      where: { id, organizationId: orgId },
-    });
-
-    if (!membership) {
-      return errorResponse("Member not found in this organization.", 404);
-    }
-
-    // Prevent changing the last owner
-    if (membership.role === "OWNER" && role !== "OWNER") {
-      const ownerCount = await prisma.organizationMember.count({
-        where: { organizationId: orgId, role: "OWNER" },
-      });
-      if (ownerCount <= 1) {
-        return errorResponse("Cannot demote the sole organization Owner.", 400);
-      }
-    }
-
-    const updated = await prisma.organizationMember.update({
-      where: { id: membership.id },
-      data: { role },
-      include: { user: true },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        organizationId: orgId,
-        userId: auth.context.user.id,
-        action: "MEMBER_ROLE_UPDATED",
-        resourceType: "MEMBER",
-        resourceId: updated.id,
-        status: "SUCCESS",
-        metadataJson: JSON.stringify({ memberEmail: updated.user.email, newRole: role }),
-      },
+    const updated = await updateMemberRoleSafe({
+      organizationId: orgId,
+      requestingUserId,
+      requestingUserRole,
+      targetMembershipId: id,
+      newRole: role,
     });
 
     return successResponse({
-      membershipId: updated.id,
+      membershipId: updated.membershipId,
       role: updated.role,
-      name: `${updated.user.firstName} ${updated.user.lastName}`,
+      name: updated.name,
+      email: updated.email,
     });
   } catch (err: any) {
-    return errorResponse("Failed to update member role.", 500);
+    const status = err.message?.includes("not found") ? 404 : 400;
+    return errorResponse(err.message || "Failed to update member role.", status);
   }
 }
 
@@ -76,45 +55,23 @@ export async function DELETE(
 
   const { id } = await params;
   const orgId = auth.context.organization.id;
+  const requestingUserId = auth.context.user.id;
+  const requestingUserRole = auth.context.role;
 
   try {
-    const membership = await prisma.organizationMember.findFirst({
-      where: { id, organizationId: orgId },
-      include: { user: true },
+    const result = await removeMemberSafe({
+      organizationId: orgId,
+      requestingUserId,
+      requestingUserRole,
+      targetMembershipId: id,
     });
 
-    if (!membership) {
-      return errorResponse("Member not found.", 404);
-    }
-
-    if (membership.role === "OWNER") {
-      const ownerCount = await prisma.organizationMember.count({
-        where: { organizationId: orgId, role: "OWNER" },
-      });
-      if (ownerCount <= 1) {
-        return errorResponse("Cannot remove the sole organization Owner.", 400);
-      }
-    }
-
-    await prisma.organizationMember.delete({
-      where: { id: membership.id },
+    return successResponse({
+      message: `Member ${result.removedEmail} removed from organization.`,
+      ...result,
     });
-
-    await prisma.auditLog.create({
-      data: {
-        organizationId: orgId,
-        userId: auth.context.user.id,
-        action: "MEMBER_REMOVED",
-        resourceType: "MEMBER",
-        resourceId: membership.id,
-        status: "SUCCESS",
-        metadataJson: JSON.stringify({ removedEmail: membership.user.email }),
-      },
-    });
-
-    return successResponse({ message: "Member removed from organization." });
   } catch (err: any) {
-    return errorResponse("Failed to remove member.", 500);
+    const status = err.message?.includes("not found") ? 404 : 400;
+    return errorResponse(err.message || "Failed to remove member.", status);
   }
 }
-

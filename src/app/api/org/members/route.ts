@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
+import crypto from "crypto";
 import { prisma } from "@/lib/db/prisma";
 import { requirePermission, requireAuth } from "@/lib/api/middleware";
 import { hashPassword } from "@/lib/auth/password";
+import { logAuditEvent } from "@/services/audit.service";
 import { successResponse, errorResponse } from "@/lib/api/response";
 
 export async function GET(req: NextRequest) {
@@ -66,8 +68,9 @@ export async function POST(req: NextRequest) {
     });
 
     if (!user) {
-      // Create user with randomized initial password
-      const tempPasswordHash = await hashPassword("TempPass2026!#" + Date.now());
+      // Create user with high-entropy cryptographically secure randomized password
+      const cryptoSecret = crypto.randomBytes(24).toString("base64") + "!Aa9";
+      const tempPasswordHash = await hashPassword(cryptoSecret);
       user = await prisma.user.create({
         data: {
           email: normalizedEmail,
@@ -106,17 +109,14 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Audit log
-    await prisma.auditLog.create({
-      data: {
-        organizationId: orgId,
-        userId: auth.context.user.id,
-        action: "MEMBER_INVITED",
-        resourceType: "MEMBER",
-        resourceId: membership.id,
-        status: "SUCCESS",
-        metadataJson: JSON.stringify({ invitedEmail: user.email, assignedRole: role }),
-      },
+    // Tamper-evident Audit log
+    await logAuditEvent({
+      organizationId: orgId,
+      userId: auth.context.user.id,
+      action: "MEMBER_INVITED",
+      resourceType: "MEMBER",
+      resourceId: membership.id,
+      metadata: { invitedEmail: user.email, assignedRole: role },
     });
 
     return successResponse({
