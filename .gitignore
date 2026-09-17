@@ -24,6 +24,8 @@ storage/uploads/*
 !storage/uploads/.gitkeep
 storage/reports/*
 !storage/reports/.gitkeep
+storage/backups/*
+!storage/backups/.gitkeep
 
 # Python cache & legacy files
 __pycache__/

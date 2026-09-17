@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "webhooks" | "compliance" | "audit">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "webhooks" | "compliance" | "system" | "audit">("profile");
 
   // Compliance & Data Retention State
   const [retentionPolicies, setRetentionPolicies] = useState<{
@@ -62,6 +62,14 @@ export default function SettingsPage() {
   const [anonymizeConfirmText, setAnonymizeConfirmText] = useState("");
   const [anonymizeMessage, setAnonymizeMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isAnonymizing, setIsAnonymizing] = useState(false);
+
+  // System Canary & Automated Backups State (Phase 22)
+  const [canaryReport, setCanaryReport] = useState<any | null>(null);
+  const [isLoadingCanary, setIsLoadingCanary] = useState(false);
+  const [backups, setBackups] = useState<any[]>([]);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [verifyingBackupId, setVerifyingBackupId] = useState<string | null>(null);
+  const [backupMessage, setBackupMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Profile State
   const [profile, setProfile] = useState<any>(null);
@@ -187,6 +195,10 @@ export default function SettingsPage() {
     // Load Compliance & Data Retention
     loadRetention();
     loadDataExports();
+
+    // Load System Canary & Backups
+    loadCanaryDiagnostics();
+    loadBackups();
   }, []);
 
   // Real-time SSE synchronization
@@ -453,6 +465,64 @@ export default function SettingsPage() {
       setAnonymizeMessage({ type: "error", text: "Network error during account erasure." });
     } finally {
       setIsAnonymizing(false);
+    }
+  };
+
+  const loadCanaryDiagnostics = () => {
+    setIsLoadingCanary(true);
+    fetch("/api/health/canary")
+      .then((res) => res.json())
+      .then((data) => {
+        setCanaryReport(data);
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingCanary(false));
+  };
+
+  const loadBackups = () => {
+    fetch("/api/admin/backups")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) setBackups(data.data.backups || []);
+      })
+      .catch(() => {});
+  };
+
+  const handleCreateBackup = async () => {
+    setIsCreatingBackup(true);
+    setBackupMessage(null);
+    try {
+      const res = await fetch("/api/admin/backups", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBackupMessage({ type: "success", text: "Atomic database snapshot backup created and verified successfully." });
+        loadBackups();
+      } else {
+        setBackupMessage({ type: "error", text: data.error || "Failed to create database backup." });
+      }
+    } catch {
+      setBackupMessage({ type: "error", text: "Network error creating database backup." });
+    } finally {
+      setIsCreatingBackup(false);
+    }
+  };
+
+  const handleVerifyBackup = async (backupId: string) => {
+    setVerifyingBackupId(backupId);
+    setBackupMessage(null);
+    try {
+      const res = await fetch(`/api/admin/backups/${backupId}/verify`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBackupMessage({ type: "success", text: "Backup verified: SQLite magic headers & PRAGMA integrity check passed." });
+        loadBackups();
+      } else {
+        setBackupMessage({ type: "error", text: data.error || "Backup verification failed." });
+      }
+    } catch {
+      setBackupMessage({ type: "error", text: "Network error verifying backup." });
+    } finally {
+      setVerifyingBackupId(null);
     }
   };
 
@@ -813,6 +883,7 @@ export default function SettingsPage() {
           { id: "apikeys", label: "API Keys & Developers", icon: Key },
           { id: "webhooks", label: "Webhooks & Alerts", icon: Webhook, badge: unreadNotificationCount > 0 ? unreadNotificationCount : null },
           { id: "compliance", label: "GDPR & Data Retention", icon: ShieldAlert },
+          { id: "system", label: "System Health & Backups", icon: Activity },
           { id: "audit", label: "Compliance Audit Trail", icon: History },
         ].map((t) => {
           const Icon = t.icon;
@@ -2516,6 +2587,316 @@ export default function SettingsPage() {
                           </a>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: SYSTEM HEALTH & AUTOMATED BACKUPS */}
+      {activeTab === "system" && (
+        <div className="space-y-6">
+          {!canManage ? (
+            <div className="p-8 rounded-xl bg-slate-900/80 border border-slate-800 text-center space-y-3">
+              <div className="h-12 w-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400">
+                <Activity className="h-6 w-6" />
+              </div>
+              <h3 className="text-sm font-bold text-white">System Diagnostics Restricted</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Canary probe telemetry and database snapshot management require Organization Administrator or Owner privileges.
+                Your current role is <strong className="text-amber-400 font-semibold">{userRole}</strong>.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Section 1: Real-Time Canary Health Probes */}
+              <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`h-3 w-3 rounded-full ${
+                        canaryReport?.overallStatus === "HEALTHY"
+                          ? "bg-emerald-400 animate-pulse shadow-lg shadow-emerald-400/50"
+                          : canaryReport?.overallStatus === "DEGRADED"
+                          ? "bg-amber-400 animate-pulse shadow-lg shadow-amber-400/50"
+                          : "bg-red-400 animate-pulse shadow-lg shadow-red-400/50"
+                      }`}
+                    />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-white">Synthetic Canary Diagnostics</h3>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            canaryReport?.overallStatus === "HEALTHY"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : canaryReport?.overallStatus === "DEGRADED"
+                              ? "bg-amber-500/20 text-amber-400"
+                              : "bg-red-500/20 text-red-400"
+                          }`}
+                        >
+                          {canaryReport?.overallStatus || "INITIALIZING"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Continuous synthetic roundtrip telemetry across database, storage, memory, and runtime event loops
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadCanaryDiagnostics}
+                    disabled={isLoadingCanary}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isLoadingCanary ? "animate-spin text-blue-400" : ""}`} />
+                    <span>{isLoadingCanary ? "Probing..." : "Run Canary Probes"}</span>
+                  </button>
+                </div>
+
+                {/* Canary Probes Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                  {/* Probe 1: Database */}
+                  <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 font-semibold text-white">
+                        <Database className="h-3.5 w-3.5 text-blue-400" />
+                        <span>Database</span>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          canaryReport?.probes?.database?.status === "PASS"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-amber-500/20 text-amber-400"
+                        }`}
+                      >
+                        {canaryReport?.probes?.database?.status || "PASS"}
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-white font-mono">
+                      {canaryReport?.probes?.database?.latencyMs ?? 0}ms
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      {canaryReport?.probes?.database?.message || "Optimal query latency"}
+                    </p>
+                  </div>
+
+                  {/* Probe 2: Storage */}
+                  <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 font-semibold text-white">
+                        <HardDrive className="h-3.5 w-3.5 text-purple-400" />
+                        <span>Storage</span>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          canaryReport?.probes?.storage?.status === "PASS"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-red-500/20 text-red-400"
+                        }`}
+                      >
+                        {canaryReport?.probes?.storage?.status || "PASS"}
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-white font-mono">
+                      {canaryReport?.probes?.storage?.latencyMs ?? 0}ms
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      {canaryReport?.probes?.storage?.message || "Write/read verified"}
+                    </p>
+                  </div>
+
+                  {/* Probe 3: Memory */}
+                  <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 font-semibold text-white">
+                        <Cpu className="h-3.5 w-3.5 text-cyan-400" />
+                        <span>Memory RSS</span>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          canaryReport?.probes?.memory?.status === "PASS"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-amber-500/20 text-amber-400"
+                        }`}
+                      >
+                        {canaryReport?.probes?.memory?.status || "PASS"}
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-white font-mono">
+                      {canaryReport?.probes?.memory?.details?.rssMb ?? 0} MB
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      Heap: {canaryReport?.probes?.memory?.details?.heapUsedMb ?? 0} MB (
+                      {canaryReport?.probes?.memory?.details?.heapUtilizationPct ?? 0}%)
+                    </p>
+                  </div>
+
+                  {/* Probe 4: Event Loop */}
+                  <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 font-semibold text-white">
+                        <Activity className="h-3.5 w-3.5 text-emerald-400" />
+                        <span>Event Loop</span>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          canaryReport?.probes?.eventLoop?.status === "PASS"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-amber-500/20 text-amber-400"
+                        }`}
+                      >
+                        {canaryReport?.probes?.eventLoop?.status || "PASS"}
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-white font-mono">
+                      {canaryReport?.probes?.eventLoop?.latencyMs ?? 0}ms
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      {canaryReport?.probes?.eventLoop?.message || "Sub-millisecond delay"}
+                    </p>
+                  </div>
+
+                  {/* Probe 5: Job Queue */}
+                  <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 font-semibold text-white">
+                        <Layers className="h-3.5 w-3.5 text-amber-400" />
+                        <span>Job Queue</span>
+                      </div>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                          canaryReport?.probes?.jobQueue?.status === "PASS"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-amber-500/20 text-amber-400"
+                        }`}
+                      >
+                        {canaryReport?.probes?.jobQueue?.status || "PASS"}
+                      </span>
+                    </div>
+                    <div className="text-lg font-bold text-white font-mono">
+                      {canaryReport?.probes?.jobQueue?.details?.runningJobs ?? 0} Active
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      Queued: {canaryReport?.probes?.jobQueue?.details?.queuedJobs ?? 0} • Stuck:{" "}
+                      {canaryReport?.probes?.jobQueue?.details?.stuckJobs ?? 0}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Automated Database Backups & Snapshots */}
+              <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div className="flex items-center gap-2">
+                    <Database className="h-5 w-5 text-emerald-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Automated Database Backups</h3>
+                      <p className="text-[11px] text-slate-400">
+                        Atomic SQLite snapshots with SHA-256 integrity verification and automated retention
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCreateBackup}
+                    disabled={isCreatingBackup}
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-lg shadow-emerald-600/20"
+                  >
+                    <HardDrive className={`h-3.5 w-3.5 ${isCreatingBackup ? "animate-pulse" : ""}`} />
+                    <span>{isCreatingBackup ? "Creating Snapshot..." : "Create Snapshot Now"}</span>
+                  </button>
+                </div>
+
+                {backupMessage && (
+                  <div
+                    className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                      backupMessage.type === "success"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : "bg-red-500/10 text-red-400 border border-red-500/20"
+                    }`}
+                  >
+                    {backupMessage.type === "success" ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                    )}
+                    <span>{backupMessage.text}</span>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    Backup Snapshot Catalog (Max 10 Retained)
+                  </h4>
+
+                  {backups.length === 0 ? (
+                    <div className="p-8 text-center rounded-lg border border-dashed border-slate-800 text-xs text-slate-500">
+                      No database snapshots found. Click "Create Snapshot Now" to generate an atomic, SHA-256 validated SQLite backup.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                            <th className="py-2.5 px-3">Timestamp</th>
+                            <th className="py-2.5 px-3">Filename</th>
+                            <th className="py-2.5 px-3">Size</th>
+                            <th className="py-2.5 px-3">Duration</th>
+                            <th className="py-2.5 px-3">SHA-256 Checksum</th>
+                            <th className="py-2.5 px-3">Status</th>
+                            <th className="py-2.5 px-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {backups.map((b) => (
+                            <tr key={b.id} className="hover:bg-slate-800/30 transition">
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400">
+                                {new Date(b.createdAt).toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-3 font-medium text-white font-mono text-[11px]">
+                                {b.fileName}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-300">
+                                {(b.fileSizeBytes / 1024).toFixed(1)} KB
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400">
+                                {b.durationMs}ms
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400">
+                                <span title={b.checksumSha256}>
+                                  {b.checksumSha256.slice(0, 16)}...
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    b.status === "VERIFIED"
+                                      ? "bg-emerald-500/20 text-emerald-400"
+                                      : b.status === "COMPLETED"
+                                      ? "bg-blue-500/20 text-blue-400"
+                                      : "bg-red-500/20 text-red-400"
+                                  }`}
+                                >
+                                  {b.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleVerifyBackup(b.id)}
+                                  disabled={verifyingBackupId === b.id}
+                                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-[11px] font-semibold transition"
+                                >
+                                  {verifyingBackupId === b.id ? "Verifying..." : "Verify PRAGMA"}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>

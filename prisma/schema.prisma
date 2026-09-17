@@ -37,6 +37,7 @@ model User {
   auditLogs         AuditLog[]
   notifications     Notification[]
   dataExports       DataExportRequest[]
+  triggeredBackups  SystemBackup[]
 }
 
 model Organization {
@@ -754,6 +755,31 @@ model DataExportRequest {
   @@index([requestedById])
   @@index([status])
 }
+
+// --------------------------------------------------------
+// System Health, Canary Diagnostics & Automated Backups (Phase 22)
+// --------------------------------------------------------
+
+model SystemBackup {
+  id                    String       @id @default(uuid())
+  fileName              String
+  storagePath           String
+  fileSizeBytes         Int
+  checksumSha256        String
+  status                String       @default("COMPLETED") // COMPLETED, VERIFIED, FAILED
+  integrityCheckPassed  Boolean      @default(true)
+  backupType            String       @default("FULL_SNAPSHOT") // FULL_SNAPSHOT, SCHEDULED_CRON
+  triggeredById         String?
+  durationMs            Int          @default(0)
+  errorMessage          String?
+  createdAt             DateTime     @default(now())
+
+  triggeredBy           User?        @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([status])
+}
+
 
 
 
