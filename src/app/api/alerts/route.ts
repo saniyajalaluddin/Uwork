@@ -119,3 +119,4 @@ export async function DELETE(req: NextRequest) {
 
   return successResponse({ message: "Alert rule deleted successfully.", id });
 }
+
