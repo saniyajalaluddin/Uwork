@@ -594,7 +594,54 @@ In strict adherence to the senior engineering production hardening roadmap, Phas
      4. Multipart Form Upload route executes streaming memory profiling pipeline and persists records cleanly.
    - Master test suite expanded to **85 passing automated tests** with 0 failures across 14 test files (`npm test`).
 
+---
 
+## 24. Phase 15 — Real-Time SSE / Live Alerting & Event Bus Architecture
 
+1. **Multi-Tenant Event Bus with Reconnection Replay Buffer** (`src/lib/events/event-bus.ts`):
+   - Built a high-throughput, in-memory event bus with scoped channels:
+     - `tenant:${organizationId}`: Broadcasts operational events to all active members of an organization.
+     - `user:${userId}`: Dispatches targeted, private notifications strictly to specific individual users.
+   - Channel isolation guarantees that cross-tenant event snooping is physically impossible.
+   - Built an in-memory 50-event replay buffer per channel with `getEventsSince(channel, lastEventId)`.
+   - Supports seamless reconnection recovery when network drops occur, replaying missed events upon client reconnection.
 
+2. **Server-Sent Events (SSE) Streaming Endpoint** (`src/app/api/events/sse/route.ts`):
+   - Implemented `GET /api/events/sse` with `text/event-stream` and `Cache-Control: no-cache, no-transform`.
+   - Reads `Last-Event-ID` header to automatically replay events missed during client disconnection.
+   - Emits an initial handshake event `CONNECTED` with the authenticated `organizationId`.
+   - Sends periodic heartbeat keep-alive comments (`: heartbeat\n\n`) every 25 seconds to keep intermediary reverse proxies (NGINX, Cloudflare, AWS ALB) from terminating idle connections.
+   - Attaches an abort listener to `req.signal` to cleanly unsubscribe and garbage collect stream resources when the browser tab closes.
 
+3. **Intelligent Alert Threshold Engine & Fatigue Cooldowns** (`src/services/alert.service.ts`):
+   - Implemented `AlertService.evaluateAlerts({ organizationId, metricCode, currentValue, baselineValue })`:
+     - Evaluates conditions: `GREATER_THAN`, `LESS_THAN`, `DROPS_BY_PCT`, and `ANOMALY_DETECTED`.
+     - Automatically calculates percentage drop/rise against baseline: $|(current - baseline) / baseline| \times 100\%$.
+     - Prevents notification spam / alert fatigue by enforcing `cooldownHours` (default: 24h) based on `lastTriggeredAt`.
+     - Automatically creates persisted `Notification` records in the database.
+     - Broadcasts `ALERT_TRIGGERED` real-time events over the tenant SSE stream.
+
+4. **Multi-Tenant Alerts REST API & Domain Integration**:
+   - Built `src/app/api/alerts/route.ts` supporting full CRUD:
+     - `GET /api/alerts`: Lists organization alert rules.
+     - `POST /api/alerts`: Creates new threshold rules with validation.
+     - `PATCH /api/alerts`: Updates rule thresholds and active state with strict IDOR verification.
+     - `DELETE /api/alerts`: Removes alert rules with strict tenant scoping.
+   - Wired domain events to publish to the event bus:
+     - `DATASET_READY` on dataset upload completion (`src/app/api/datasets/upload/route.ts`).
+     - `FORECAST_COMPLETED` on forecast tournament completion (`src/app/api/forecasts/route.ts`).
+     - `ANOMALY_ALERT` on critical anomaly detection with alert rule evaluation (`src/app/api/anomalies/route.ts`).
+
+5. **Real-Time Live Feed UI** (`src/app/(dashboard)/alerts/page.tsx`):
+   - Upgraded the Alerts Dashboard with an active `EventSource` connection to `/api/events/sse`.
+   - Displays real-time connection status pill ("Live SSE Connected" vs "Reconnecting...").
+   - Real-time event feed displays live alerts, dataset uploads, forecasts, and anomalies as they occur without refreshing.
+   - Interactive modal allows configuring custom metrics, threshold conditions, trigger values, and cooldown periods.
+
+6. **Phase 15 Automated Test Suite** (`tests/realtime_sse_and_alerting.test.ts`):
+   - 4 automated test scenarios:
+     1. Multi-tenant Event Bus enforces channel isolation and supports reconnection replay buffer.
+     2. `AlertService` evaluates threshold breaches and enforces cooldown protection against duplicate alert spam.
+     3. Alerts REST API enforces full CRUD and cross-tenant IDOR attack isolation (404 on alien access).
+     4. Server-Sent Events (SSE) route connects and delivers live stream messages with proper headers and handshake.
+   - Master test suite expanded to **90 passing automated tests** with 0 failures across 15 test files (`npm test`).
