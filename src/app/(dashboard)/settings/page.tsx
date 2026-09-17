@@ -31,10 +31,37 @@ import {
   RefreshCw,
   Activity,
   Radio,
+  Download,
+  FileJson,
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "webhooks" | "audit">("profile");
+  const [activeTab, setActiveTab] = useState<"profile" | "org" | "members" | "benefits" | "apikeys" | "webhooks" | "compliance" | "audit">("profile");
+
+  // Compliance & Data Retention State
+  const [retentionPolicies, setRetentionPolicies] = useState<{
+    retentionAuditDays: number;
+    retentionForecastDays: number;
+    retentionJobDays: number;
+  }>({
+    retentionAuditDays: 365,
+    retentionForecastDays: 180,
+    retentionJobDays: 30,
+  });
+  const [retentionMessage, setRetentionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isCleaningRetention, setIsCleaningRetention] = useState(false);
+  const [retentionCleanupResult, setRetentionCleanupResult] = useState<any | null>(null);
+
+  // Data Export (Takeout) State
+  const [dataExports, setDataExports] = useState<any[]>([]);
+  const [isExportingData, setIsExportingData] = useState(false);
+  const [exportMessage, setExportMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // GDPR Account Deletion State
+  const [anonymizePassword, setAnonymizePassword] = useState("");
+  const [anonymizeConfirmText, setAnonymizeConfirmText] = useState("");
+  const [anonymizeMessage, setAnonymizeMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isAnonymizing, setIsAnonymizing] = useState(false);
 
   // Profile State
   const [profile, setProfile] = useState<any>(null);
@@ -156,6 +183,10 @@ export default function SettingsPage() {
         if (data?.success) setAuditLogs(data.data.logs || []);
       })
       .catch(() => {});
+
+    // Load Compliance & Data Retention
+    loadRetention();
+    loadDataExports();
   }, []);
 
   // Real-time SSE synchronization
@@ -302,6 +333,126 @@ export default function SettingsPage() {
       }
     } catch {
       alert("Error opening billing portal.");
+    }
+  };
+
+  const loadRetention = () => {
+    fetch("/api/compliance/retention")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && data.data) {
+          setRetentionPolicies({
+            retentionAuditDays: data.data.retentionAuditDays ?? 365,
+            retentionForecastDays: data.data.retentionForecastDays ?? 180,
+            retentionJobDays: data.data.retentionJobDays ?? 30,
+          });
+        }
+      })
+      .catch(() => {});
+  };
+
+  const loadDataExports = () => {
+    fetch("/api/compliance/export")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success) {
+          setDataExports(data.data.exports || []);
+        }
+      })
+      .catch(() => {});
+  };
+
+  const handleUpdateRetention = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRetentionMessage(null);
+    try {
+      const res = await fetch("/api/compliance/retention", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          auditDays: Number(retentionPolicies.retentionAuditDays),
+          forecastDays: Number(retentionPolicies.retentionForecastDays),
+          jobDays: Number(retentionPolicies.retentionJobDays),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRetentionMessage({ type: "success", text: "Data retention policies successfully saved." });
+      } else {
+        setRetentionMessage({ type: "error", text: data.error || "Failed to update retention policies." });
+      }
+    } catch {
+      setRetentionMessage({ type: "error", text: "Network error updating retention policies." });
+    }
+  };
+
+  const handleRunRetentionCleanup = async () => {
+    if (!confirm("Run immediate retention cleanup? Records older than your configured retention windows will be permanently pruned.")) return;
+    setIsCleaningRetention(true);
+    setRetentionCleanupResult(null);
+    try {
+      const res = await fetch("/api/compliance/retention/cleanup", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRetentionCleanupResult(data.data.result);
+      } else {
+        alert(data.error || "Retention cleanup failed.");
+      }
+    } catch {
+      alert("Network error running cleanup.");
+    } finally {
+      setIsCleaningRetention(false);
+    }
+  };
+
+  const handleCreateDataExport = async () => {
+    setIsExportingData(true);
+    setExportMessage(null);
+    try {
+      const res = await fetch("/api/compliance/export", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setExportMessage({ type: "success", text: "Tenant data export archive successfully generated." });
+        loadDataExports();
+      } else {
+        setExportMessage({ type: "error", text: data.error || "Failed to generate export." });
+      }
+    } catch {
+      setExportMessage({ type: "error", text: "Network error initiating data export." });
+    } finally {
+      setIsExportingData(false);
+    }
+  };
+
+  const handleAnonymizeAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (anonymizeConfirmText !== "DELETE MY ACCOUNT") {
+      setAnonymizeMessage({ type: "error", text: "Confirmation text must exactly match 'DELETE MY ACCOUNT'." });
+      return;
+    }
+    if (!anonymizePassword) {
+      setAnonymizeMessage({ type: "error", text: "Password is required to confirm account deletion." });
+      return;
+    }
+    setIsAnonymizing(true);
+    setAnonymizeMessage(null);
+    try {
+      const res = await fetch("/api/user/anonymize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: anonymizePassword, confirmation: anonymizeConfirmText }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert("Your account has been anonymized and all sessions revoked. Redirecting to login.");
+        window.location.href = "/login";
+      } else {
+        setAnonymizeMessage({ type: "error", text: data.error || "Failed to anonymize account." });
+      }
+    } catch {
+      setAnonymizeMessage({ type: "error", text: "Network error during account erasure." });
+    } finally {
+      setIsAnonymizing(false);
     }
   };
 
@@ -661,6 +812,7 @@ export default function SettingsPage() {
           { id: "benefits", label: "Admin Benefits & Quotas", icon: Shield },
           { id: "apikeys", label: "API Keys & Developers", icon: Key },
           { id: "webhooks", label: "Webhooks & Alerts", icon: Webhook, badge: unreadNotificationCount > 0 ? unreadNotificationCount : null },
+          { id: "compliance", label: "GDPR & Data Retention", icon: ShieldAlert },
           { id: "audit", label: "Compliance Audit Trail", icon: History },
         ].map((t) => {
           const Icon = t.icon;
@@ -851,6 +1003,78 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Danger Zone: GDPR Right to Be Forgotten */}
+          <div className="lg:col-span-2 p-6 rounded-xl bg-red-950/20 border border-red-900/40 space-y-4">
+            <div className="flex items-center gap-2 text-red-400">
+              <ShieldAlert className="h-5 w-5" />
+              <h3 className="text-sm font-bold text-white">Danger Zone: GDPR Right to Be Forgotten (Art. 17)</h3>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Permanent account erasure will purge all cryptographic sessions, zero out authentication credentials,
+              scrub your email and profile into an irreversible hash, and revoke all organization memberships.
+              Under platform security policies, you cannot erase your account if you are the sole Owner of an active organization.
+            </p>
+
+            {anonymizeMessage && (
+              <div
+                className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                  anonymizeMessage.type === "success"
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    : "bg-red-500/10 text-red-400 border border-red-500/20"
+                }`}
+              >
+                {anonymizeMessage.type === "success" ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                )}
+                <span>{anonymizeMessage.text}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAnonymizeAccount} className="space-y-3 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">
+                    Confirm Your Password
+                  </label>
+                  <input
+                    type="password"
+                    value={anonymizePassword}
+                    onChange={(e) => setAnonymizePassword(e.target.value)}
+                    placeholder="Enter current password"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">
+                    Type <code className="text-red-400 font-mono">DELETE MY ACCOUNT</code> to confirm
+                  </label>
+                  <input
+                    type="text"
+                    value={anonymizeConfirmText}
+                    onChange={(e) => setAnonymizeConfirmText(e.target.value)}
+                    placeholder="DELETE MY ACCOUNT"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-red-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={isAnonymizing || anonymizeConfirmText !== "DELETE MY ACCOUNT" || !anonymizePassword}
+                  className="px-4 py-2 rounded-lg bg-red-600/90 hover:bg-red-600 disabled:opacity-40 disabled:hover:bg-red-600/90 text-white text-xs font-semibold flex items-center gap-2 transition shadow-lg shadow-red-600/20"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>{isAnonymizing ? "Anonymizing..." : "Permanently Erase & Anonymize Account"}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -2066,6 +2290,238 @@ export default function SettingsPage() {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* TAB: COMPLIANCE & DATA RETENTION */}
+      {activeTab === "compliance" && (
+        <div className="space-y-6">
+          {!canManage ? (
+            <div className="p-8 rounded-xl bg-slate-900/80 border border-slate-800 text-center space-y-3">
+              <div className="h-12 w-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto text-amber-400">
+                <ShieldAlert className="h-6 w-6" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Compliance Controls Restricted</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Regulatory retention policies and tenant data takeout exports require Organization Administrator or Owner privileges.
+                Your current role is <strong className="text-amber-400 font-semibold">{userRole}</strong>.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Card 1: Data Retention Lifecycle Policies */}
+              <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-blue-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Data Retention Policies</h3>
+                      <p className="text-[11px] text-slate-400">Automated lifecycle pruning under GDPR Art. 5 & CCPA</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRunRetentionCleanup}
+                    disabled={isCleaningRetention}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isCleaningRetention ? "animate-spin text-blue-400" : ""}`} />
+                    <span>{isCleaningRetention ? "Pruning..." : "Run Cleanup Now"}</span>
+                  </button>
+                </div>
+
+                {retentionMessage && (
+                  <div
+                    className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                      retentionMessage.type === "success"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : "bg-red-500/10 text-red-400 border border-red-500/20"
+                    }`}
+                  >
+                    {retentionMessage.type === "success" ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                    )}
+                    <span>{retentionMessage.text}</span>
+                  </div>
+                )}
+
+                {retentionCleanupResult && (
+                  <div className="p-3.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1">
+                    <div className="font-semibold text-white flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      <span>Retention Cleanup Completed</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      Pruned: <strong className="text-white">{retentionCleanupResult.prunedAuditLogs}</strong> audit logs,{" "}
+                      <strong className="text-white">{retentionCleanupResult.prunedForecasts}</strong> forecasts,{" "}
+                      <strong className="text-white">{retentionCleanupResult.prunedJobs}</strong> background jobs.
+                    </p>
+                  </div>
+                )}
+
+                <form onSubmit={handleUpdateRetention} className="space-y-4">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Audit Log Retention (Days)
+                      </label>
+                      <span className="text-xs font-mono text-blue-400">{retentionPolicies.retentionAuditDays} days</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="30"
+                      max="2555"
+                      step="1"
+                      value={retentionPolicies.retentionAuditDays}
+                      onChange={(e) =>
+                        setRetentionPolicies({
+                          ...retentionPolicies,
+                          retentionAuditDays: parseInt(e.target.value, 10),
+                        })
+                      }
+                      className="w-full accent-blue-500 bg-slate-800"
+                    />
+                    <span className="text-[10px] text-slate-500">Allowed range: 30 days to 2,555 days (7 years compliance max)</span>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Forecast Horizon Cache Retention (Days)
+                      </label>
+                      <span className="text-xs font-mono text-blue-400">{retentionPolicies.retentionForecastDays} days</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="7"
+                      max="730"
+                      step="1"
+                      value={retentionPolicies.retentionForecastDays}
+                      onChange={(e) =>
+                        setRetentionPolicies({
+                          ...retentionPolicies,
+                          retentionForecastDays: parseInt(e.target.value, 10),
+                        })
+                      }
+                      className="w-full accent-blue-500 bg-slate-800"
+                    />
+                    <span className="text-[10px] text-slate-500">Allowed range: 7 days to 730 days (2 years max)</span>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-semibold text-slate-300">
+                        Job Execution History Retention (Days)
+                      </label>
+                      <span className="text-xs font-mono text-blue-400">{retentionPolicies.retentionJobDays} days</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="365"
+                      step="1"
+                      value={retentionPolicies.retentionJobDays}
+                      onChange={(e) =>
+                        setRetentionPolicies({
+                          ...retentionPolicies,
+                          retentionJobDays: parseInt(e.target.value, 10),
+                        })
+                      }
+                      className="w-full accent-blue-500 bg-slate-800"
+                    />
+                    <span className="text-[10px] text-slate-500">Allowed range: 1 day to 365 days</span>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition shadow-lg shadow-blue-600/20"
+                  >
+                    Save Retention Policies
+                  </button>
+                </form>
+              </div>
+
+              {/* Card 2: GDPR Data Portability & Takeout */}
+              <div className="p-6 rounded-xl bg-slate-900/80 border border-slate-800 space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <FileJson className="h-5 w-5 text-purple-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">GDPR Tenant Data Takeout</h3>
+                      <p className="text-[11px] text-slate-400">Article 20 compliant structured machine-readable export</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCreateDataExport}
+                    disabled={isExportingData}
+                    className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-lg shadow-purple-600/20"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>{isExportingData ? "Assembling..." : "Generate Export"}</span>
+                  </button>
+                </div>
+
+                {exportMessage && (
+                  <div
+                    className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                      exportMessage.type === "success"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : "bg-red-500/10 text-red-400 border border-red-500/20"
+                    }`}
+                  >
+                    {exportMessage.type === "success" ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                    )}
+                    <span>{exportMessage.text}</span>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    Past Export Archives (7-day retention)
+                  </h4>
+                  {dataExports.length === 0 ? (
+                    <div className="p-6 text-center rounded-lg border border-dashed border-slate-800 text-xs text-slate-500">
+                      No data exports generated yet. Click "Generate Export" to assemble an immutable JSON archive of all tenant datasets, forecasts, anomalies, decisions, and audit records.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-800/60 text-xs">
+                      {dataExports.map((exp: any) => (
+                        <div key={exp.id} className="py-3 flex items-center justify-between">
+                          <div>
+                            <div className="font-semibold text-white flex items-center gap-2">
+                              <span>Export #{exp.id.slice(0, 10)}</span>
+                              <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] font-bold">
+                                {exp.status}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-400 mt-0.5">
+                              Size: {(exp.fileSizeBytes / 1024).toFixed(1)} KB • Created:{" "}
+                              {new Date(exp.createdAt).toLocaleDateString()} • Expires:{" "}
+                              {new Date(exp.expiresAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <a
+                            href={`/api/compliance/export/${exp.id}?download=true`}
+                            download
+                            className="px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white flex items-center gap-1.5 border border-slate-700 text-xs font-semibold transition"
+                          >
+                            <Download className="h-3.5 w-3.5 text-purple-400" />
+                            <span>Download JSON</span>
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
