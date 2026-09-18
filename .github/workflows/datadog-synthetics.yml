@@ -33,7 +33,7 @@ jobs:
 
       - name: Run Datadog Synthetic tests
         if: steps.check_keys.outputs.configured == 'true'
-        uses: DataDog/synthetics-ci-github-action@v4
+        uses: DataDog/synthetics-ci-github-action@v4.1.1
         with:
           api-key: ${{ secrets.DD_API_KEY || secrets.DATADOG_API_KEY }}
           app-key: ${{ secrets.DD_APP_KEY || secrets.DATADOG_APP_KEY }}
